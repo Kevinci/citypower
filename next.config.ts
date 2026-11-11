@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   experimental: {
     agentFeedback: true,
   },
+  // Dev indicator top right: bottom left is the game's speed controls.
+  devIndicators: { position: "top-right" },
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

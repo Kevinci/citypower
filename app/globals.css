@@ -24,3 +24,74 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Loading screen: strokes draw themselves, hold, fade and start again (LoadingScreen.tsx). */
+@theme {
+  --animate-build: build 4.5s ease-in-out infinite both;
+  --animate-glow: glow 4.5s ease-in-out infinite both;
+  --animate-scan: scan 1.4s ease-in-out infinite;
+  --animate-assemble: assemble 4.8s cubic-bezier(0.22, 1, 0.36, 1) infinite both;
+
+  @keyframes build {
+    0% {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+      opacity: 1;
+    }
+    25% {
+      stroke-dashoffset: 0;
+    }
+    80% {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+      opacity: 1;
+    }
+    100% {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+      opacity: 0;
+    }
+  }
+  @keyframes glow {
+    0%,
+    10% {
+      opacity: 0;
+    }
+    30%,
+    75% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  /* Loading house: compositor-only (opacity + transform), smooth while the main thread is busy. */
+  @keyframes assemble {
+    0% {
+      opacity: 0;
+      transform: translateY(10px) scale(0.96);
+    }
+    12% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    72% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    86%,
+    100% {
+      opacity: 0;
+      transform: translateY(-4px) scale(1);
+    }
+  }
+
+  @keyframes scan {
+    0% {
+      left: -33%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+}
