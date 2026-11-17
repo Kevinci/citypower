@@ -348,6 +348,13 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
 - **Schuhfabriken teilen Leder und Gummi fair (`leatherShare`/`rubberShare`):** Nutzer-Bug „Schuhfabrik direkt neben der
   Gerberei wird nicht beliefert“ – Gerbereien lieferten 17 Leder/min, die vorhandenen Fabriken brauchten 16; `take` in
   Listenreihenfolge ließ der neuen nichts. Meldung bei Knappheit: „… in der Stadt – fair verteilt“.
+- **Schuhe und Möbel neu abgestimmt (Nutzerwunsch „immer zu wenig“, Nutzer-Spielstand 11.000 Einw.: Schuhe 26 %, Möbel 35 %):**
+  Engpässe waren Gerberei (6 Leder/min, kein Ausbau), Schuhgeschäft (kein Ausbau) und Stahl für Möbel. Jetzt: Gerberei 10/min,
+  ausbaubar Gerberei / Große Gerberei / Lederwerk (wächst nach hinten 30 × 24/32/40); Gummifabrik 10/min, ausbaubar bis Gummiwerk
+  (wächst in die Höhe); Schuhfabrik 14/min, 0,3 Leder je Paar; Schuhgeschäft 14/min, ausbaubar Schuhhaus / Schuhcenter (13 × 12/20/28,
+  Kunden nach Größe wie Metzgerei); Möbelfabrik 9/min, 1,2 Bretter + 0,3 Stahl. Stufenfaktoren dieser Ketten einheitlich 1/2/3,5.
+  Gleicher Spielstand danach ohne Ausbau: Schuhe 57 %, Möbel 59 %; Rest begrenzt die Besetzung (50–63 %, Arbeitskräftemangel).
+  Prüfen ohne Browser: `node --import ./scripts/perf/register.mjs scripts/perf/chains.ts <save.json>` (Ist/Max je Kettenglied, Gewinne).
 - **Faire Verteilung an Geschäfte (`fairShare` in simulate):** Metzgereien, Schuh-, Mode- und Möbelgeschäfte nehmen bei
   Knappheit im Netz nur ihren Anteil (Angebot/Gesamtwunsch). Vorher leerte das erste Geschäft die Fabriken, die anderen
   bekamen nichts und meldeten „… anschließen“ (sah wie ein Verbindungsfehler aus). Meldung dann „… in der Stadt – fair
@@ -966,7 +973,10 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   `routeEdges`. Pendelfolge über die Bahnhöfe in Linienreihenfolge (Hauptachse der Bahnhofspunkte), Halt mit Zugmitte am
   Bahnsteig, 12 s, an Endpunkten Richtungswechsel als Wendezug (`twinOf`, Wagen bleiben, `flip`). Beim Doppelgleis wechselt der
   Zug auf den letzten/ersten 90 m (`SWITCH`) aufs Bahnsteiggleis (`endLane`/`startLane`). Modelle je Achse skaliert
-  (Wagen 19 m, Lok 16 m), Kenney-Fronten schauen nach −z (`MODEL_YAW` π), Fenster leuchten nachts. Züge können sich auf
+  (Wagen 19 m, Lok 16 m), Fenster leuchten nachts. **Fahrtrichtung (Nutzer-Bug „Regionalbahn falschrum“):** Die Triebköpfe
+  `city-a`/`bullet-a` haben die Nase auf **+z** (gemessen: Dachhöhe fällt nach +z ab, −z = Kupplungsende) → `MODEL_YAW` 0
+  (vorher π, beide Züge fuhren mit dem Heck voran). Personenzüge sind Wendezüge mit Triebkopf an beiden Enden (letzter
+  Wagen = erster Wagen, wird umgedreht gezeichnet). Dev: `__trains.heads()` (Position, Fahrtrichtung, `flip` je Zug). Züge können sich auf
   eingleisigen Strecken durchdringen (keine Blockabstände) – offen.
 
 ## Baumenü (`Drawer` in Hud.tsx, Nutzerwunsch „bei Fabriken wird es eng“)
@@ -1124,6 +1134,10 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   zeigte ins Schiff: SphereGeometry-phi 0 = −x, Halbkugel nach +z braucht phiStart 0 – Zylinder/Kegel dagegen
   thetaStart −π/2). Tür `KenneyDoor` (Rahmen, Kassettentür, Oberlicht, Griff, Stufe), Fenster mit dickem Rahmen, Sprossen,
   Lichtreflex (`ArchWindow`).
+- **Gerberei im Pack-Stil (`TanneryPack.tsx`, Nutzerwunsch):** eigenes Kenney-Modell statt Kit-Halle (`custom: true` in
+  `PACK_SPECS` → keine Kit-Modelle, Hof/Zaun/Waren/Schild bleiben): Backstein-Werkstatt mit weißen Kanten, Satteldach mit
+  Randleisten, Schornstein; runde Gerbbottiche (einer mit Kalk), Trockengestelle mit Häuten. Stufe 2 offener Trockenschuppen
+  + Bottiche, Stufe 3 Lederlager mit Rolltor. Alles links vom Warenstreifen (`GOODS_STRIP`).
 - **Hühnerhof:** Halle vorne (`mainDepth` 0,45), dahinter eingezäunter Auslauf mit Rasen + Stroh und 14 Cube-Pets-Küken
   (`ChickRun`, `Herd kind="chick"`, Länge 1,25 m damit sie aus der Luft sichtbar sind).
 - **Bank und Rathaus im Pack-Stil (`LandmarksPack.tsx`):** prunkvoll mit Stufen (`BANK_WEALTH`, `TOWNHALL_RESIDENTS` jetzt

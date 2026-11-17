@@ -216,7 +216,7 @@ export function stepMayor(m: MayorState, economy: EconomyStats, buildings: Build
       Math.min(100, m.suspicion - (FADE_PER_HOUR / 60) * minutes - washRelief + ((racketSuspicion + FRONT_PER_DAY * fronts.length) / 1440) * minutes),
     ),
     offers: m.offers.filter((o) => o.expires > now && (!o.building || live.has(o.building))),
-    favours: m.favours.filter((f) => f.until > now && live.has(f.building)),
+    favours: mergeFavours(m.favours.filter((f) => f.until > now && live.has(f.building))),
     rackets,
   };
   if (m.jailUntil && m.jailUntil <= now) {
@@ -256,7 +256,7 @@ export function stepMayor(m: MayorState, economy: EconomyStats, buildings: Build
   }
   // New offers – not during a scandal (nobody dares), with a pause in between.
   if (!next.scandalUntil && next.offers.length < MAX_OFFERS && now - next.lastOfferAt >= OFFER_GAP && rnd() < 0.03 * minutes) {
-    const offer = makeOffer(economy, buildings, now, rnd, newId);
+    const offer = makeOffer(economy, buildings, m, now, rnd, newId);
     if (offer) {
       next = { ...next, offers: [...next.offers, offer], lastOfferAt: now };
       notice = `Vertrauliches Angebot: ${offer.from} bietet ${Math.round(offer.amount).toLocaleString("de-DE")} € (${OFFER_LABEL[offer.kind]}) – Knopf „Bürgermeister“`;
@@ -265,10 +265,22 @@ export function stepMayor(m: MayorState, economy: EconomyStats, buildings: Build
   return { mayor: next, seized: 0, confiscateVilla: false, notice };
 }
 
-function makeOffer(economy: EconomyStats, buildings: Building[], now: number, rnd: () => number, newId: () => string): BribeOffer | null {
+/** One tax break per firm: duplicates (older saves) collapse into the one that runs longest. */
+function mergeFavours(favours: Favour[]): Favour[] {
+  const byBuilding = new Map<string, Favour>();
+  for (const f of favours) {
+    const prev = byBuilding.get(f.building);
+    if (!prev || f.until > prev.until) byBuilding.set(f.building, f);
+  }
+  return byBuilding.size === favours.length ? favours : [...byBuilding.values()];
+}
+
+function makeOffer(economy: EconomyStats, buildings: Building[], m: MayorState, now: number, rnd: () => number, newId: () => string): BribeOffer | null {
   const residents = economy.residents;
   const vary = () => 0.75 + rnd() * 0.5;
-  const firms = taxpayers(buildings, economy);
+  // Firms that already enjoy (or have been offered) a tax break do not ask again.
+  const favoured = new Set([...m.favours.map((f) => f.building), ...m.offers.flatMap((o) => (o.kind === "taxbreak" && o.building ? [o.building] : []))]);
+  const firms = taxpayers(buildings, economy).filter((b) => !favoured.has(b.id));
   const roll = rnd();
   if (roll < 0.4 && residents > 0) {
     return { id: newId(), kind: "permit", from: DEVELOPERS[Math.floor(rnd() * DEVELOPERS.length)], amount: Math.round((20000 + residents * 25) * vary()), expires: now + OFFER_LIFE };
@@ -296,7 +308,10 @@ function makeOffer(economy: EconomyStats, buildings: Building[], now: number, rn
 export function acceptOffer(m: MayorState, offerId: string, now: number): { mayor: MayorState; townCost: number; growthPoints: number; offer: BribeOffer } | null {
   const offer = m.offers.find((o) => o.id === offerId);
   if (!offer || jailed(m, now)) return null;
-  const favours = offer.kind === "taxbreak" && offer.building ? [...m.favours, { building: offer.building, until: now + TAXBREAK_DAYS * 1440 }] : m.favours;
+  const favours =
+    offer.kind === "taxbreak" && offer.building
+      ? mergeFavours([...m.favours, { building: offer.building, until: now + TAXBREAK_DAYS * 1440 }])
+      : m.favours;
   return {
     mayor: {
       ...m,

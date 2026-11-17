@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { INDUSTRY, levelName, sizeOf, type Building, type BuildingKind } from "@/lib/city/economy";
 import { FactoryYard, GOODS_KINDS, GOODS_STRIP } from "./FactoryYard";
 import { Fence, Herd, type Area } from "./Animals";
+import { PackTannery } from "./TanneryPack";
 import { kitMaterial, useKitParts, type Kit, type KitParts } from "./HousePack";
 
 /**
@@ -50,6 +51,8 @@ interface PackSpec {
   grow?: number[];
   /** Rooftop landmark that makes the shop recognisable from the air. */
   roof?: RoofKind;
+  /** Own Kenney-look model instead of kit halls (yard, fence, goods and sign stay). */
+  custom?: boolean;
 }
 
 const chimneyL = ind("chimney-large");
@@ -80,17 +83,20 @@ export const PACK_SPECS: Partial<Record<BuildingKind, PackSpec>> = {
     maxH: 16,
     props: [{ url: tank, fx: 0.4, fz: 0.05, h: 3 }],
   },
-  tannery: {
+  // Own model (TanneryPack.tsx): workshop, vats, drying racks; drying shed and leather store per level.
+  tannery: { kit: "industrial", variant: 3, main: ind("building-k"), custom: true },
+  // Grows upwards on the same plot; a second latex tank from level 3.
+  rubberfactory: {
     kit: "industrial",
-    variant: 3,
-    main: ind("building-k"),
-    maxH: 14,
+    variant: 2,
+    main: ind("building-c"),
+    maxH: 18,
+    grow: [1, 1, 1.4, 1.8],
     props: [
-      { url: tank, fx: 0.38, fz: 0.25, h: 3.5 },
-      { url: tank, fx: 0.38, fz: 0.0, h: 3.5 },
+      { url: tankL, fx: 0.36, fz: 0.3, h: 9 },
+      { url: tankL, fx: -0.3, fz: 0.34, h: 11, min: 3 },
     ],
   },
-  rubberfactory: { kit: "industrial", variant: 2, main: ind("building-c"), maxH: 18, props: [{ url: tankL, fx: 0.36, fz: 0.3, h: 9 }] },
   shoefactory: { kit: "industrial", variant: 1, main: ind("building-b"), maxH: 18, grow: [1, 1, 1.6, 2.2] },
   spinning: { kit: "industrial", variant: 3, main: ind("building-m"), extra: { 2: ind("building-s"), 3: ind("building-k") }, maxH: 18 },
   clothing: { kit: "industrial", variant: 1, main: ind("building-t"), extra: { 2: ind("building-a"), 3: ind("building-r") }, maxH: 16 },
@@ -167,7 +173,8 @@ export const PACK_SPECS: Partial<Record<BuildingKind, PackSpec>> = {
   warehouse: { kit: "industrial", variant: 0, main: ind("building-i"), extra: { 2: ind("building-h"), 3: ind("building-o") }, maxH: 12 },
 
   /* ---------- shops and leisure ---------- */
-  shoeshop: { kit: "commercial", variant: 0, main: com("building-a"), maxH: 13, roof: "shoeshop" },
+  // Grows to the back like the butcher: stock room (Schuhhaus), bigger sales hall (Schuhcenter).
+  shoeshop: { kit: "commercial", variant: 0, main: com("building-a"), extra: { 2: ind("building-k"), 3: ind("building-p") }, maxH: 13, roof: "shoeshop" },
   fashion: { kit: "commercial", variant: 1, main: com("building-b"), maxH: 13 },
   jeweller: { kit: "commercial", variant: 2, main: com("building-h"), extra: { 2: ind("building-k"), 3: ind("building-p") }, maxH: 13, roof: "jeweller" },
   restaurant: { kit: "commercial", variant: 1, main: com("building-e"), maxH: 12 },
@@ -432,6 +439,7 @@ export function PackBuilding({ b }: { b: Building }) {
   const hasGoods = GOODS_KINDS.includes(b.kind) && w >= 24;
   const items = useMemo(() => {
     const out: { model: KitParts; kit: Kit; variant: number; x: number; z: number; s: number; sx?: number; sy?: number; sz?: number }[] = [];
+    if (spec.custom) return out;
     const whole = spec.whole?.[b.level];
     if (whole) {
       const m = models.get(whole.url);
@@ -481,6 +489,7 @@ export function PackBuilding({ b }: { b: Building }) {
       ) : (
         <FactoryYard kind={b.kind} w={w} d={d} fence={false} goods={false} />
       )}
+      {b.kind === "tannery" && <PackTannery w={w} d={d} level={b.level} />}
       {b.kind === "chickenfarm" && <ChickRun w={w} d={d} strip={hasGoods ? GOODS_STRIP + 1 : 0} />}
       {spec.foundation && <mesh geometry={a.box} material={a.post} scale={[w, 10, d]} position={[0, -10, 0]} receiveShadow />}
       {items.map((it, i) => (

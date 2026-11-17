@@ -33,8 +33,11 @@ const HEIGHT_SCALE = 2.45;
 const DWELL = 12;
 const ACCEL = 0.8;
 const BRAKE = 1.1;
-/** Kenney train fronts look towards −z: turn them to drive nose first. */
-const MODEL_YAW = Math.PI;
+/**
+ * Yaw that turns a model nose first. The Kenney cab cars (city-a, bullet-a) have their sloped nose
+ * at +z (measured: roof height falls off towards +z), so they need no turn; wagons are symmetric.
+ */
+const MODEL_YAW = 0;
 const MAX_PER_MODEL = 48;
 /** Length over which a train changes tracks before a stop and after leaving (m). */
 const SWITCH = 90;
@@ -245,13 +248,16 @@ function draw(graph: LaneGraph, runs: Run[], meshes: (THREE.InstancedMesh | null
     if (!run.leg) continue;
     const cars = run.type.cars;
     for (let k = 0; k < cars.length; k++) {
-      const model = run.flip ? cars[cars.length - 1 - k] : cars[k];
+      const j = run.flip ? cars.length - 1 - k : k;
+      const model = cars[j];
+      // A cab at the tail (same model as the head) looks backwards: push-pull train.
+      const tailCab = j === cars.length - 1 && j > 0 && model === cars[0];
       const mi = MODEL_INDEX.get(model)!;
       const mesh = meshes[mi];
       if (!mesh || counts[mi] >= MAX_PER_MODEL) continue;
       sample(graph, run, run.s - run.offsets[k]);
       pos.y += RAIL_TOP;
-      quat.setFromAxisAngle(up, Math.atan2(dir.x, dir.z) + MODEL_YAW + (run.flip ? Math.PI : 0));
+      quat.setFromAxisAngle(up, Math.atan2(dir.x, dir.z) + MODEL_YAW + (run.flip !== tailCab ? Math.PI : 0));
       matrix.compose(pos, quat, one);
       mesh.setMatrixAt(counts[mi]++, matrix);
     }
@@ -361,6 +367,20 @@ export function Trains() {
   useEffect(() => {
     syncRuns(graph, runs.current, trains, railBuildings, finished, lastGraph.current !== graph);
     lastGraph.current = graph;
+    // Dev: `__trains.heads()` = head position, direction of travel and push-pull state of every train.
+    if (process.env.NODE_ENV !== "production") {
+      const list = runs.current;
+      (window as unknown as { __trains?: unknown }).__trains = {
+        graph,
+        runs: list,
+        heads: () =>
+          [...list.values()].flatMap((run) => {
+            if (!run.leg) return [];
+            sample(graph, run, run.s);
+            return [{ id: run.train.id, type: run.type.id, x: pos.x, z: pos.z, dx: dir.x, dz: dir.z, v: run.v, flip: run.flip }];
+          }),
+      };
+    }
   }, [graph, trains, railBuildings, finished]);
   useEffect(() => () => models.geometries.forEach((g) => g.dispose()), [models]);
 

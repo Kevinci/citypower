@@ -22,7 +22,10 @@ export interface TrainType {
   upkeep: number;
   /** Top speed (m/s) for the animation. */
   speed: number;
-  /** Models front to back (Kenney Train Kit). */
+  /**
+   * Models front to back (Kenney Train Kit). A last car equal to the first is a second cab turned
+   * round (push-pull train: a nose at both ends).
+   */
   cars: string[];
 }
 
@@ -35,7 +38,7 @@ export const TRAIN_TYPES: TrainType[] = [
     cost: 120_000,
     upkeep: 30,
     speed: 22,
-    cars: ["train-electric-city-a", "train-electric-city-b", "train-electric-city-c"],
+    cars: ["train-electric-city-a", "train-electric-city-b", "train-electric-city-a"],
   },
   {
     id: "express",
@@ -45,7 +48,7 @@ export const TRAIN_TYPES: TrainType[] = [
     cost: 320_000,
     upkeep: 70,
     speed: 36,
-    cars: ["train-electric-bullet-a", "train-electric-bullet-b", "train-electric-bullet-b", "train-electric-bullet-c"],
+    cars: ["train-electric-bullet-a", "train-electric-bullet-b", "train-electric-bullet-b", "train-electric-bullet-a"],
   },
   {
     id: "freight",

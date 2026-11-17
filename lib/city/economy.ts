@@ -623,6 +623,8 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     icon: "tannery",
     size: [30, 24],
     cost: 26000,
+    // Grows only to the back (like the slaughterhouse).
+    upgrade: [0, 0, 30000, 65000],
     upkeep: 25,
     water: 14,
     residents: 0,
@@ -634,6 +636,8 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     icon: "rubberfactory",
     size: [36, 28],
     cost: 32000,
+    // Grows upwards on the same plot (taller vulcanising hall, more tanks).
+    upgrade: [0, 0, 35000, 75000],
     upkeep: 30,
     water: 8,
     residents: 0,
@@ -658,11 +662,14 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     icon: "shoeshop",
     size: [13, 12],
     cost: 10000,
+    // Grows only to the back, like the butcher.
+    upgrade: [0, 0, 14000, 32000],
     upkeep: 15,
     water: 2,
     residents: 0,
     jobs: 4,
-    description: "Verkauft Schuhe an die Einwohner. Gut beschuhte Bürger sind zufriedener und locken Zuzügler an.",
+    description:
+      "Verkauft Schuhe an die Einwohner. Gut beschuhte Bürger sind zufriedener und locken Zuzügler an. Ausbaubar zum Schuhhaus und Schuhcenter (mehr Kunden).",
   },
   sheepfarm: {
     label: "Schaffarm",
@@ -1213,12 +1220,12 @@ const MEAT_PER_PIG = 1;
 const HIDES_PER_CATTLE = 1;
 const HIDES_PER_PIG = 0.5;
 /** Leather chain: capacities per minute and what one unit takes. */
-const TANNERY_CAPACITY = 6;
-const RUBBER_CAPACITY = 8;
-const SHOE_CAPACITY = 10;
-const SHOE_LEATHER = 0.4;
+const TANNERY_CAPACITY = 10;
+const RUBBER_CAPACITY = 10;
+const SHOE_CAPACITY = 14;
+const SHOE_LEATHER = 0.3;
 const SHOE_RUBBER = 0.2;
-const SHOESHOP_CAPACITY = 10;
+const SHOESHOP_CAPACITY = 14;
 /** Pairs of shoes every resident buys per minute. */
 const SHOES_PER_RESIDENT = 0.02;
 /** Textile chain: capacities per minute (× level factor) and what one unit takes. */
@@ -1393,6 +1400,20 @@ const LEVEL_SIZE: Partial<Record<BuildingKind, [number, number][]>> = {
     [13, 20],
     [13, 28],
   ],
+  // Grows only to the back, like the slaughterhouse.
+  tannery: [
+    [30, 24],
+    [30, 24],
+    [30, 32],
+    [30, 40],
+  ],
+  // Grows only to the back, like the butcher.
+  shoeshop: [
+    [13, 12],
+    [13, 12],
+    [13, 20],
+    [13, 28],
+  ],
   // Grows only to the back, like the butcher.
   jeweller: [
     [12, 12],
@@ -1422,9 +1443,9 @@ const BAKERY_CAPACITY = 14;
 const BREAD_FLOUR = 1;
 const BREAD_MILK = 0.5;
 /** Furniture factory: pieces per minute at most, and what one piece needs. */
-const FURNITURE_CAPACITY = 6;
-const FURNITURE_BOARDS = 1.5;
-const FURNITURE_STEEL = 0.5;
+const FURNITURE_CAPACITY = 9;
+const FURNITURE_BOARDS = 1.2;
+const FURNITURE_STEEL = 0.3;
 /** Recycling yard: collected per resident of its road network and minute, capacity at level 1. */
 const RECYCLE_PER_RESIDENT = 0.004;
 const RECYCLE_CAPACITY = 8;
@@ -1442,10 +1463,13 @@ export const STORE_LEVEL_FACTOR = [0, 1, 2, 3.5, 7];
 export const LEVELS: Partial<Record<BuildingKind, { name: string[]; factor: number[]; jobs: number[]; upkeep: number[] }>> = {
   bakery: { name: ["", "Bäckerei", "Backfabrik"], factor: [0, 1, 4], jobs: [0, 0, 18], upkeep: [0, 0, 40] },
   sawmill: { name: ["", "Holzfabrik", "Großsägewerk", "Holzwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 20, 45], upkeep: [0, 0, 30, 70] },
-  furniture: { name: ["", "Möbelfabrik", "Große Möbelfabrik", "Möbelwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 18, 40], upkeep: [0, 0, 25, 60] },
+  furniture: { name: ["", "Möbelfabrik", "Große Möbelfabrik", "Möbelwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 18, 40], upkeep: [0, 0, 25, 60] },
   sheepfarm: { name: ["", "Schaffarm", "Schaffarm mit Scherhalle", "Große Schaffarm", "Wollgut"], factor: [0, 1, 1.6, 2.4, 3.5], jobs: [0, 0, 3, 8, 16], upkeep: [0, 0, 8, 18, 35] },
   spinning: { name: ["", "Spinnerei", "Große Spinnerei", "Spinnereiwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 10, 24], upkeep: [0, 0, 20, 45] },
-  shoefactory: { name: ["", "Schuhfabrik", "Große Schuhfabrik", "Schuhwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 12, 28], upkeep: [0, 0, 25, 55] },
+  shoefactory: { name: ["", "Schuhfabrik", "Große Schuhfabrik", "Schuhwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 12, 28], upkeep: [0, 0, 25, 55] },
+  tannery: { name: ["", "Gerberei", "Große Gerberei", "Lederwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 6, 14], upkeep: [0, 0, 20, 45] },
+  rubberfactory: { name: ["", "Gummifabrik", "Große Gummifabrik", "Gummiwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 8, 20], upkeep: [0, 0, 22, 50] },
+  shoeshop: { name: ["", "Schuhgeschäft", "Schuhhaus", "Schuhcenter"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 3, 8], upkeep: [0, 0, 8, 18] },
   clothing: { name: ["", "Kleidungsfabrik", "Große Kleidungsfabrik", "Textilwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 14, 32], upkeep: [0, 0, 25, 55] },
   foodfactory: { name: ["", "Lebensmittelfabrik", "Große Lebensmittelfabrik", "Lebensmittelwerk"], factor: [0, 1, 1.8, 3], jobs: [0, 0, 16, 36], upkeep: [0, 0, 25, 55] },
   slaughterhouse: { name: ["", "Schlachthof", "Großschlachthof", "Fleischwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 8, 20], upkeep: [0, 0, 20, 45] },
@@ -2522,22 +2546,24 @@ export function simulate(
   /** Bought from outside the town (no supplier building): cost per building. */
   const imports = new Map<string, number>();
   for (const b of tanneries) {
-    const capacity = TANNERY_CAPACITY * work(b);
+    const max = TANNERY_CAPACITY * levelFactor(b);
+    const capacity = max * work(b);
     const hides = take(b, "hides", capacity, slaughterhouses);
     keep(hides.taken, 1);
     stock.set(b.id, { leather: hides.got });
     const st = status[b.id];
     st.inputs = { hides: { need: capacity, got: hides.got } };
-    st.outputs = { leather: { made: hides.got, max: TANNERY_CAPACITY } };
+    st.outputs = { leather: { made: hides.got, max } };
     st.problem = st.problem ?? (hides.got < capacity * 0.5 ? "Zu wenig Häute – Schlachthof anschließen" : null);
   }
   for (const b of rubberFactories) {
     // Natural rubber does not grow here: it is imported at the caoutchouc price.
-    const made = RUBBER_CAPACITY * work(b);
+    const max = RUBBER_CAPACITY * levelFactor(b);
+    const made = max * work(b);
     imports.set(b.id, made * PRICE.caoutchouc);
     stock.set(b.id, { rubber: made });
     status[b.id].inputs = { caoutchouc: { need: made, got: made } };
-    status[b.id].outputs = { rubber: { made, max: RUBBER_CAPACITY } };
+    status[b.id].outputs = { rubber: { made, max } };
   }
   // Scarce leather and rubber are shared by need: otherwise the factories that buy first empty
   // the tanneries and a new factory gets nothing – even right next to a tannery (user bug).
@@ -2572,11 +2598,12 @@ export function simulate(
           : null);
   }
   const shopsOn = new Map<number, number>();
-  for (const b of shoeShops) shopsOn.set(netOf.get(b.id)!, (shopsOn.get(netOf.get(b.id)!) ?? 0) + 1);
+  // Customers split by shop size (a bigger shoe shop draws more of them), like the butchers.
+  for (const b of shoeShops) shopsOn.set(netOf.get(b.id)!, (shopsOn.get(netOf.get(b.id)!) ?? 0) + levelFactor(b));
   let shoesSold = 0;
   const shoeWant = (b: Building) => {
-    const customers = ((residentsOn.get(netOf.get(b.id)!) ?? 0) * SHOES_PER_RESIDENT) / (shopsOn.get(netOf.get(b.id)!) ?? 1);
-    return { customers, capacity: Math.min(SHOESHOP_CAPACITY * work(b), customers) };
+    const customers = ((residentsOn.get(netOf.get(b.id)!) ?? 0) * SHOES_PER_RESIDENT * levelFactor(b)) / (shopsOn.get(netOf.get(b.id)!) ?? 1);
+    return { customers, capacity: Math.min(SHOESHOP_CAPACITY * levelFactor(b) * work(b), customers) };
   };
   const shoeShare = fairShare("shoes", shoeFactories, shoeShops.map((b) => [b, shoeWant(b).capacity]));
   for (const b of shoeShops) {
@@ -2587,7 +2614,7 @@ export function simulate(
     const st = status[b.id];
     st.output = got.got;
     st.inputs = { shoes: { need: capacity, got: got.got } };
-    st.outputs = { shoes: { made: got.got, max: SHOESHOP_CAPACITY } };
+    st.outputs = { shoes: { made: got.got, max: SHOESHOP_CAPACITY * levelFactor(b) } };
     st.problem =
       st.problem ??
       (customers < 0.05

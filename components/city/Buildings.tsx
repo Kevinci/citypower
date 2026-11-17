@@ -1328,7 +1328,44 @@ const PEN_AREA: Area = { x0: -12, x1: 4, z0: 5.5, z1: 10.5 };
 const penHeight = () => 0.05;
 
 /** Gerberei: brick workshop, tanning pits, drying racks with hides, barrels and a chimney. */
-export function Tannery() {
+export function Tannery({ level = 1 }: { level?: number }) {
+  const a = useAssets();
+  const [, d] = sizeOf({ kind: "tannery", level });
+  // The workshop stays at the road; the plot grows to the back (more pits, a drying hall).
+  const back = d / 2;
+  return (
+    <group>
+      <group position={[0, 0, -(d - 24) / 2]}>
+        <TanneryBase />
+      </group>
+      {level >= 2 && (
+        <>
+          <Box m={a.gravel} w={28} d={d - 24} y1={0.05} z={back - (d - 24) / 2} />
+          {/* Drying hall with a ventilated ridge. */}
+          <Box m={a.brick} w={14} d={6} y1={6} x={-6} z={back - 4} />
+          <Roof m={a.roofRed} g={a.brick} w={14} d={6} y={6} h={2.4} x={-6} z={back - 4} />
+          {[0, 1, 2].map((i) => (
+            <group key={i} position={[5 + i * 4.5, 0, back - 4]}>
+              <Box m={a.stone} w={4} d={3.6} y1={0.6} />
+              <Box m={a.tanLiquid} w={3.4} d={3} y0={0.6} y1={0.62} />
+            </group>
+          ))}
+        </>
+      )}
+      {level >= 3 && (
+        <>
+          {/* Leather store and a second workshop. */}
+          <Box m={a.hall} w={16} d={7} y1={7} x={-5} z={back - 12} />
+          <Box m={a.concrete} w={16.4} d={7.4} y0={7} y1={7.4} x={-5} z={back - 12} />
+          <Box m={a.brick} w={1.2} d={1.2} y1={14} x={-12} z={back - 12} />
+          <Van x={8} z={back - 12} />
+        </>
+      )}
+    </group>
+  );
+}
+
+function TanneryBase() {
   const a = useAssets();
   return (
     <group>
@@ -1368,14 +1405,21 @@ export function Tannery() {
 }
 
 /** Gummifabrik: vulcanising hall with sign, latex tanks, chimney, caoutchouc bales, tyre stacks. */
-export function RubberFactory() {
+export function RubberFactory({ level = 1 }: { level?: number }) {
   const a = useAssets();
+  // Grows upwards on the same plot: a taller vulcanising hall, a third latex tank at level 3.
+  const hall = [9, 9, 13, 17][level] ?? 9;
   return (
     <group>
       <Box m={a.yard} w={34} d={26} y1={0.05} />
-      <Box m={a.hall} w={22} d={14} y1={9} x={-4} z={-2} />
+      <Box m={a.hall} w={22} d={14} y1={hall} x={-4} z={-2} />
+      {level >= 3 && (
+        <mesh position={[13, 5, -2]} material={a.paintWhite} castShadow>
+          <cylinderGeometry args={[2, 2, 10, 20]} />
+        </mesh>
+      )}
       {[-12, -4, 4].map((x) => (
-        <group key={x} position={[x, 9, -2]} rotation={[0, Math.PI / 2, 0]}>
+        <group key={x} position={[x, hall, -2]} rotation={[0, Math.PI / 2, 0]}>
           <Roof m={a.slate} g={a.hall} w={14} d={8} y={0} h={2.4} overhang={0} />
         </group>
       ))}
@@ -1430,7 +1474,35 @@ export function ShoeFactory({ level = 1 }: { level?: number }) {
 }
 
 /** Schuhgeschäft: small shop with brown awning and sign. */
-export function ShoeShop() {
+export function ShoeShop({ level = 1 }: { level?: number }) {
+  const a = useAssets();
+  const [, d] = sizeOf({ kind: "shoeshop", level });
+  // The shop stays at the road; the plot grows to the back (stock room, bigger sales hall).
+  const back = d / 2;
+  return (
+    <group>
+      <group position={[0, 0, -(d - 12) / 2]}>
+        <ShoeShopBase />
+      </group>
+      {level === 2 && (
+        <>
+          <Box m={a.shop} w={10} d={6} y1={4.5} x={-1.5} z={back - 4} />
+          <Box m={a.concrete} w={10.4} d={6.4} y0={4.5} y1={4.9} x={-1.5} z={back - 4} />
+          <Van x={5} z={back - 3.5} />
+        </>
+      )}
+      {level >= 3 && (
+        <>
+          <Box m={a.shop} w={12} d={14} y1={7} x={-0.5} z={back - 8} />
+          <Box m={a.concrete} w={12.4} d={14.4} y0={7} y1={7.5} x={-0.5} z={back - 8} />
+          <Van x={5.2} z={back - 2.5} />
+        </>
+      )}
+    </group>
+  );
+}
+
+function ShoeShopBase() {
   const a = useAssets();
   return (
     <group>
@@ -3331,10 +3403,10 @@ const SingleBuilding = memo(function SingleBuilding({ b, grid }: { b: Building; 
       {b.kind === "bank" && <Bank />}
       {b.kind === "exchange" && <Exchange />}
       {b.kind === "pool" && <Pool />}
-      {b.kind === "tannery" && <Tannery />}
-      {b.kind === "rubberfactory" && <RubberFactory />}
+      {b.kind === "tannery" && <Tannery level={b.level} />}
+      {b.kind === "rubberfactory" && <RubberFactory level={b.level} />}
       {b.kind === "shoefactory" && <ShoeFactory level={b.level} />}
-      {b.kind === "shoeshop" && <ShoeShop />}
+      {b.kind === "shoeshop" && <ShoeShop level={b.level} />}
       {b.kind === "spinning" && <Spinning level={b.level} />}
       {b.kind === "clothing" && <ClothingFactory level={b.level} />}
       {b.kind === "fashion" && <FashionShop />}
