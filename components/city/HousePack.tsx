@@ -7,6 +7,7 @@ import type { Building } from "@/lib/city/economy";
 import { buildingGround } from "@/lib/city/placement";
 import { sampleDepth, type DepthGrid } from "@/lib/city/terrain";
 import { kenneyGrassTexture } from "./kenneyGround";
+import { windowGlow } from "./nightGlow";
 
 /**
  * Houses drawn with the Kenney City Kits (CC0, public/models/city/) instead of the built-in
@@ -87,6 +88,8 @@ export function kitMaterial(kit: Kit, variant: number, glossy = false) {
   m = glossy
     ? new THREE.MeshStandardMaterial({ map, roughness: 0.25, metalness: 0.35 })
     : new THREE.MeshStandardMaterial({ map, roughness: 0.75, metalness: 0 });
+  // Some windows light up at night.
+  windowGlow(m, "kit");
   atlasCache.set(key, m);
   return m;
 }
@@ -103,44 +106,53 @@ export interface KitParts {
   roof: { x: number; z: number; w: number; d: number };
 }
 
-/** Loads kit models and returns their parts per url (the node scale of the files is ignored). */
+/**
+ * Parts of one loaded kit model, shared by everything that uses it (cached per loaded scene).
+ * Every pack building asks for all kit models: cloning them per building held each model
+ * hundreds of times (2.7 GB of geometry in a big town).
+ */
+const kitPartsCache = new WeakMap<THREE.Object3D, KitParts>();
+function kitPartsOf(scene: THREE.Object3D): KitParts {
+  const hit = kitPartsCache.get(scene);
+  if (hit) return hit;
+  const meshes: THREE.Mesh[] = [];
+  scene.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+  });
+  const box = new THREE.Box3();
+  for (const m of meshes) {
+    m.geometry.computeBoundingBox();
+    box.union(m.geometry.boundingBox!);
+  }
+  const c = box.getCenter(new THREE.Vector3());
+  const parts = meshes.map((m) => {
+    const geometry = m.geometry.clone();
+    // Unused by the kit materials (no normal map): a third of the vertex data.
+    geometry.deleteAttribute("tangent");
+    geometry.translate(-c.x, -box.min.y, -c.z);
+    const name = (Array.isArray(m.material) ? m.material[0] : m.material).name ?? "";
+    return { geometry, glossy: name.includes("specular") };
+  });
+  const size = box.getSize(new THREE.Vector3());
+  // Roof: the topmost part of the model (awnings and annexes lower down do not count).
+  const top = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (const p of parts) {
+    const pos = p.geometry.attributes.position as THREE.BufferAttribute;
+    for (let k = 0; k < pos.count; k++) if (pos.getY(k) > size.y * 0.88) top.expandByPoint(v.fromBufferAttribute(pos, k));
+  }
+  const roof = top.isEmpty()
+    ? { x: 0, z: 0, w: size.x, d: size.z }
+    : { x: (top.min.x + top.max.x) / 2, z: (top.min.z + top.max.z) / 2, w: top.max.x - top.min.x, d: top.max.z - top.min.z };
+  const out = { parts, size, roof };
+  kitPartsCache.set(scene, out);
+  return out;
+}
+
+/** Loads kit models and returns their parts per url (the node scale of the files is ignored). Shared, never disposed. */
 export function useKitParts(urls: string[]): Map<string, KitParts> {
   const gltfs = useGLTF(urls);
-  const out = useMemo(() => {
-    const map = new Map<string, KitParts>();
-    gltfs.forEach((g, i) => {
-      const meshes: THREE.Mesh[] = [];
-      g.scene.traverse((o) => {
-        if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
-      });
-      const box = new THREE.Box3();
-      for (const m of meshes) {
-        m.geometry.computeBoundingBox();
-        box.union(m.geometry.boundingBox!);
-      }
-      const c = box.getCenter(new THREE.Vector3());
-      const parts = meshes.map((m) => {
-        const geometry = m.geometry.clone();
-        geometry.translate(-c.x, -box.min.y, -c.z);
-        const name = (Array.isArray(m.material) ? m.material[0] : m.material).name ?? "";
-        return { geometry, glossy: name.includes("specular") };
-      });
-      const size = box.getSize(new THREE.Vector3());
-      // Roof: the topmost part of the model (awnings and annexes lower down do not count).
-      const top = new THREE.Box3();
-      for (const p of parts) {
-        const pos = p.geometry.attributes.position as THREE.BufferAttribute;
-        for (let k = 0; k < pos.count; k++) if (pos.getY(k) > size.y * 0.88) top.expandByPoint(new THREE.Vector3(pos.getX(k), pos.getY(k), pos.getZ(k)));
-      }
-      const roof = top.isEmpty()
-        ? { x: 0, z: 0, w: size.x, d: size.z }
-        : { x: (top.min.x + top.max.x) / 2, z: (top.min.z + top.max.z) / 2, w: top.max.x - top.min.x, d: top.max.z - top.min.z };
-      map.set(urls[i], { parts, size, roof });
-    });
-    return map;
-  }, [gltfs, urls]);
-  useEffect(() => () => out.forEach((k) => k.parts.forEach((p) => p.geometry.dispose())), [out]);
-  return out;
+  return useMemo(() => new Map(gltfs.map((g, i) => [urls[i], kitPartsOf(g.scene)])), [gltfs, urls]);
 }
 
 interface ModelGeometry {

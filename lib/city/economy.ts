@@ -1,3 +1,4 @@
+import type { RailStats } from "./railway";
 import { closestOnPath } from "./adjacency";
 import {
   fuelPerMinute,
@@ -87,7 +88,18 @@ export type BuildingKind =
   | "goldsmelter"
   | "jeweller"
   | "exchange"
-  | "airport";
+  | "airport"
+  | "police"
+  | "firestation"
+  | "ruin"
+  | "trainstation"
+  | "traindepot"
+  | "prison"
+  | "villa"
+  | "casino"
+  | "pizzeria"
+  | "boathouse"
+  | "newspaper";
 
 export interface Building {
   id: string;
@@ -239,6 +251,111 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     jobs: 12,
     description:
       "Kai mit Kran am schiffbaren Wasser. Hier kaufst du Schiffe; sie gehören zu diesem Hafen, holen Waren aus den Lagerhallen im Straßennetz und verkaufen sie flussabwärts.",
+  },
+  prison: {
+    label: "Gefängnis",
+    icon: "prison",
+    size: [56, 48],
+    cost: 60000,
+    upgrade: [0, 0, 90000, 200000],
+    upkeep: 45,
+    water: 8,
+    residents: 0,
+    jobs: 24,
+    description:
+      "Justizvollzug im Straßennetz einer Polizeiwache: das Land zahlt der Stadt je Häftling eine Kostenerstattung, die Polizei arbeitet wirksamer (mehr Bußgelder, mehr Sicherheit). Ausbau: mehr Haftplätze.",
+  },
+  villa: {
+    label: "Bürgermeistervilla",
+    icon: "villa",
+    // One plot for all levels (like the airport): the upgrades change what stands on it.
+    size: [56, 48],
+    cost: 150000,
+    upgrade: [0, 0, 400000, 1000000],
+    upkeep: 20,
+    water: 0,
+    residents: 0,
+    jobs: 0,
+    description:
+      "Die Belohnung für den Bürgermeister: moderne Villa mit Pool, Garten und Garage hinter Zaun und Tor. Steht auch am Berg (wird in den Hang gebaut), braucht keine Straße. Ausbau zur Luxusvilla und zur Traumvilla mit Whirlpool, Poolhaus, Rosengarten und Luxusautos. Nur eine pro Stadt, rein zur Zierde.",
+  },
+  boathouse: {
+    label: "Bootshaus",
+    icon: "boathouse",
+    // Front 12 m on land (the house), back 14 m out on the water (the jetty).
+    size: [16, 26],
+    cost: 250000,
+    // One plot for all levels: the lounge and the yacht (moored off the jetty) change the look.
+    upgrade: [0, 0, 400000, 2500000],
+    upkeep: 10,
+    water: 0,
+    residents: 0,
+    jobs: 0,
+    description:
+      "Das Bootshaus des Bürgermeisters am See oder Fluss: Haus am Ufer, Steg ins Wasser und ein Sportboot, das ab und zu eine Runde dreht. Ausbau zur Lounge und zum Luxus-Bootshaus mit Yacht. Bezahlt vom Privatkonto, braucht keine Straße. Nur eins pro Stadt.",
+  },
+  trainstation: {
+    label: "Bahnhof",
+    icon: "trainstation",
+    size: [64, 20],
+    cost: 35000,
+    upgrade: [0, 0, 60000, 150000],
+    upkeep: 20,
+    water: 2,
+    residents: 0,
+    jobs: 6,
+    description:
+      "Mit dem Bahnsteig direkt an ein Gleis bauen. Züge aus dem Stellwerk halten hier: Fahrgäste aus dem Umkreis bringen Fahrgeld, Betriebe im Umkreis Fracht. Ausbau: Bahnhof, Hauptbahnhof.",
+  },
+  traindepot: {
+    label: "Stellwerk",
+    icon: "traindepot",
+    size: [52, 24],
+    cost: 45000,
+    upgrade: [0, 0, 70000, 160000],
+    upkeep: 25,
+    water: 2,
+    residents: 0,
+    jobs: 10,
+    description:
+      "Stellwerk mit Betriebshof am Gleis: hier kaufst du Züge. Sie pendeln zwischen allen Bahnhöfen im selben Gleisnetz (mindestens zwei). Ausbau: mehr Abstellgleise.",
+  },
+  ruin: {
+    label: "Brandruine",
+    icon: "ruin",
+    size: [11, 10],
+    cost: 0,
+    upkeep: 0,
+    water: 0,
+    residents: 0,
+    jobs: 0,
+    description: "Abgebranntes Wohnhaus: niemand wohnt hier, niemand zahlt Steuern. Abreißen, damit das Grundstück wieder bebaut wird.",
+  },
+  police: {
+    label: "Polizeiwache",
+    icon: "police",
+    size: [24, 18],
+    cost: 22000,
+    upgrade: [0, 0, 28000, 60000],
+    upkeep: 25,
+    water: 2,
+    residents: 0,
+    jobs: 12,
+    description:
+      "Streifenwagen fahren mit Blaulicht zu Unfällen im Straßennetz und sperren die Stelle ab, bis sie geräumt ist. Einwohner im Umkreis (450 m) fühlen sich sicher. Ausbau: mehr Wagen, größerer Umkreis.",
+  },
+  firestation: {
+    label: "Feuerwache",
+    icon: "firestation",
+    size: [28, 20],
+    cost: 26000,
+    upgrade: [0, 0, 32000, 70000],
+    upkeep: 30,
+    water: 6,
+    residents: 0,
+    jobs: 14,
+    description:
+      "Löschfahrzeuge rücken mit Blaulicht zu Hausbränden aus. Ohne Feuerwache im Straßennetz brennt ein Haus ab. Umkreis 400 m, Ausbau: mehr Fahrzeuge, größerer Umkreis.",
   },
   jobcenter: {
     label: "Arbeitsamt",
@@ -465,6 +582,30 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     residents: 0,
     jobs: 5,
     description: "Essen gehen: kocht mit Fleisch und Milch. Freizeit macht Lust auf Familie – mehr Geburten.",
+  },
+  newspaper: {
+    label: "Zeitungsverlag",
+    icon: "newspaper",
+    size: [30, 24],
+    cost: 60000,
+    upkeep: 25,
+    water: 3,
+    residents: 0,
+    jobs: 16,
+    description:
+      "Redaktion und Druckerei der „Citypower Rundschau“: verkauft jeden Tag Zeitungen an die Einwohner und berichtet über alles, was in der Stadt passiert – Neubauten, Unglücke, Rekorde und auch Skandale des Bürgermeisters. Jede Ausgabe lässt sich lesen. Nur einer pro Stadt.",
+  },
+  pizzeria: {
+    label: "Pizzeria",
+    icon: "pizzeria",
+    size: [14, 14],
+    cost: 16000,
+    upkeep: 15,
+    water: 5,
+    residents: 0,
+    jobs: 4,
+    description:
+      "Pizza aus dem Holzofen: backt mit Mehl (Mühle) und Milch (Käse vom Hof) und teilt sich die Gäste mit den Restaurants – mehr Freizeit. Der Bürgermeister kann hier unauffällig Geld waschen.",
   },
   cinema: {
     label: "Kino",
@@ -702,6 +843,18 @@ export const BUILDINGS: Record<BuildingKind, BuildingSpec> = {
     jobs: 8,
     description: "Riesenrad, Karussell und Buden. Ein Magnet für die ganze Stadt – mehr Freizeit, Zuzug und Geburten.",
   },
+  casino: {
+    label: "Spielbank",
+    icon: "casino",
+    size: [34, 28],
+    cost: 90000,
+    upkeep: 35,
+    water: 2,
+    residents: 0,
+    jobs: 14,
+    description:
+      "Roulette, Spieltische und Automaten: die Bürger verspielen ihr Geld (Gewerbesteuer für die Stadt, etwas mehr Freizeit). Der Bürgermeister kann hier selbst Roulette spielen – mit dem Privatkonto.",
+  },
 };
 
 /** Buildable from the economy menu, in menu order. */
@@ -719,6 +872,7 @@ export const MENU_BUILDINGS: BuildingKind[] = [
   "slaughterhouse",
   "butcher",
   "restaurant",
+  "pizzeria",
   "cinema",
   "ironmine",
   "powerplant",
@@ -743,6 +897,8 @@ export type Good =
   | "ticket"
   | "swim"
   | "ride"
+  | "game"
+  | "news"
   | "hides"
   | "leather"
   | "caoutchouc"
@@ -781,6 +937,8 @@ export const GOOD_LABEL: Record<Good, string> = {
   ticket: "Kinokarten",
   swim: "Badegäste",
   ride: "Fahrten",
+  game: "Spiele",
+  news: "Zeitungen",
   hides: "Häute",
   leather: "Leder",
   caoutchouc: "Kautschuk",
@@ -821,6 +979,8 @@ export const GOOD_ICON: Record<Good, string> = {
   ticket: "ticket",
   swim: "swim",
   ride: "ride",
+  game: "casino",
+  news: "newspaper",
   hides: "hides",
   leather: "leather",
   caoutchouc: "caoutchouc",
@@ -861,6 +1021,8 @@ export const GOOD_COLOUR: Record<Good, string> = {
   ticket: "#8e44ad",
   swim: "#2fa8d8",
   ride: "#e84a8a",
+  game: "#c9a227",
+  news: "#5b6670",
   hides: "#b08060",
   leather: "#7a4a2a",
   caoutchouc: "#e8e0c0",
@@ -895,6 +1057,7 @@ export const RECIPES: Partial<Record<BuildingKind, { inputs: Partial<Record<Good
   slaughterhouse: { inputs: { cattle: 2, pigs: 6 }, outputs: { meat: 12 } },
   butcher: { inputs: { meat: 10 }, outputs: {} },
   restaurant: { inputs: { meat: 3, milk: 2 }, outputs: { meal: 12 } },
+  pizzeria: { inputs: { flour: 3, milk: 1.8 }, outputs: { meal: 12 } },
   cinema: { inputs: {}, outputs: { ticket: 15 } },
   pool: { inputs: {}, outputs: { swim: 16 } },
   tannery: { inputs: { hides: 6 }, outputs: { leather: 6 } },
@@ -910,6 +1073,8 @@ export const RECIPES: Partial<Record<BuildingKind, { inputs: Partial<Record<Good
   foodfactory: { inputs: { flour: 5.4, milk: 5.8, eggs: 4.8, cocoa: 2, coffee: 2 }, outputs: { pasta: 6, sweets: 4, food: 10 } },
   discounter: { inputs: { food: 10, pasta: 6, sweets: 4, rice: 4, spices: 2 }, outputs: {} },
   fair: { inputs: {}, outputs: { ride: 24 } },
+  casino: { inputs: {}, outputs: { game: 20 } },
+  newspaper: { inputs: {}, outputs: { news: 40 } },
   mill: { inputs: { wheat: 16 }, outputs: { flour: 16 } },
   bakery: { inputs: { flour: 14, milk: 7 }, outputs: { bread: 14 } },
   steelworks: { inputs: { ore: 10 }, outputs: { steel: 10 } },
@@ -1124,11 +1289,15 @@ const MEALS_PER_RESIDENT = 0.03;
 const RESTAURANT_CAPACITY = 12;
 const MEAL_MEAT = 0.25;
 const MEAL_MILK = 0.15;
+/** A pizza: flour for the dough, milk for the cheese. */
+const PIZZA_FLOUR = 0.25;
 /** Attractions: cinema, pool and fair each sell visits to the residents of their network. */
 const ATTRACTIONS: Partial<Record<BuildingKind, { good: Good; perResident: number; capacity: number }>> = {
   cinema: { good: "ticket", perResident: 0.025, capacity: 15 },
   pool: { good: "swim", perResident: 0.03, capacity: 16 },
   fair: { good: "ride", perResident: 0.03, capacity: 24 },
+  casino: { good: "game", perResident: 0.015, capacity: 20 },
+  newspaper: { good: "news", perResident: 0.02, capacity: 40 },
 };
 /** Births are multiplied by up to this much with a full leisure offer. */
 const LEISURE_BIRTH_BONUS = 1.5;
@@ -1287,6 +1456,13 @@ export const LEVELS: Partial<Record<BuildingKind, { name: string[]; factor: numb
   playground: { name: ["", "Spielplatz", "Abenteuerspielplatz", "Erlebnisspielplatz"], factor: [0, 1, 1, 1], jobs: [0, 0, 0, 0], upkeep: [0, 0, 4, 9] },
   school: { name: ["", "Schule", "Gesamtschule", "Schulzentrum"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 14, 30], upkeep: [0, 0, 25, 55] },
   jobcenter: { name: ["", "Arbeitsamt", "Jobcenter", "Agentur für Arbeit"], factor: [0, 1, 1, 1], jobs: [0, 0, 6, 14], upkeep: [0, 0, 15, 35] },
+  police: { name: ["", "Polizeiwache", "Polizeirevier", "Polizeipräsidium"], factor: [0, 1, 2, 3], jobs: [0, 0, 10, 24], upkeep: [0, 0, 20, 45] },
+  firestation: { name: ["", "Feuerwache", "Hauptfeuerwache", "Berufsfeuerwehr"], factor: [0, 1, 2, 3], jobs: [0, 0, 12, 28], upkeep: [0, 0, 25, 55] },
+  prison: { name: ["", "Gefängnis", "Justizvollzugsanstalt", "Hochsicherheitsgefängnis"], factor: [0, 1, 2.5, 6], jobs: [0, 0, 20, 50], upkeep: [0, 0, 40, 100] },
+  villa: { name: ["", "Bürgermeistervilla", "Luxusvilla", "Traumvilla"], factor: [0, 1, 1, 1], jobs: [0, 0, 0, 0], upkeep: [0, 0, 45, 90] },
+  boathouse: { name: ["", "Bootshaus", "Bootshaus mit Lounge", "Luxus-Bootshaus"], factor: [0, 1, 1, 1], jobs: [0, 0, 0, 0], upkeep: [0, 0, 20, 60] },
+  trainstation: { name: ["", "Haltepunkt", "Bahnhof", "Hauptbahnhof"], factor: [0, 1, 2.5, 6], jobs: [0, 0, 8, 24], upkeep: [0, 0, 25, 70] },
+  traindepot: { name: ["", "Stellwerk", "Betriebshof", "Bahnbetriebswerk"], factor: [0, 2, 4, 8], jobs: [0, 0, 8, 20], upkeep: [0, 0, 20, 50] },
   recycling: { name: ["", "Recyclinghof", "Wertstoffhof", "Recyclingwerk"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 6, 14], upkeep: [0, 0, 15, 35] },
   jeweller: { name: ["", "Juwelier", "Juwelier mit Goldschmiede", "Schmuckhaus"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 3, 8], upkeep: [0, 0, 10, 25] },
   goldsmelter: { name: ["", "Goldschmelze", "Scheideanstalt", "Goldraffinerie"], factor: [0, 1, 2, 3.5], jobs: [0, 0, 8, 20], upkeep: [0, 0, 25, 60] },
@@ -1302,7 +1478,34 @@ export const RECREATION_RADIUS: Partial<Record<BuildingKind, number[]>> = {
   playground: [0, 180, 250, 320],
 };
 /** Buildings that work without a street (fed by cable, or reached on foot). */
-export const ROADLESS_KINDS: BuildingKind[] = ["transformer", "park", "playground"];
+export const ROADLESS_KINDS: BuildingKind[] = ["transformer", "park", "playground", "trainstation", "traindepot", "villa", "boathouse"];
+
+/* ---------- emergency services: police and fire stations ---------- */
+
+/** Reach of a police / fire station per level (m): incidents there are served, residents feel safe. */
+export const SERVICE_RADIUS: Partial<Record<BuildingKind, number[]>> = {
+  police: [0, 450, 650, 900],
+  firestation: [0, 400, 600, 800],
+};
+/** Vehicles a station sends out at once, per level (= LEVELS factor); hospitals keep two ambulances. */
+export const vehiclesOf = (b: { kind: BuildingKind; level: number }) => (b.kind === "hospital" ? AMBULANCES : (LEVELS[b.kind]?.factor[b.level] ?? 1));
+/** Ambulances per hospital and how far they go out (m, same road network). */
+export const AMBULANCES = 2;
+export const AMBULANCE_RADIUS = 1200;
+/**
+ * Money for the town: running income per covered resident and minute (police: fines,
+ * fire brigade: fire-protection levy of the insurers), and a fee per finished mission
+ * (towing and police report, fire brigade call-out, ambulance transport billed to the health insurance).
+ */
+export const POLICE_FINES = 0.006;
+export const FIRE_LEVY = 0.004;
+export const MISSION_FEE = { accident: 900, fire: 2500, ambulance: 1200 } as const;
+/** Prison places at level factor 1, inmates per resident (with police), and what the state pays per inmate and minute. */
+export const PRISON_PLACES = 100;
+export const INMATES_PER_RESIDENT = 0.004;
+export const PRISON_REFUND = 1.4;
+/** With a prison, police fines and the safety mood factor rise by this share. */
+export const PRISON_POLICE_BONUS = 0.4;
 
 /** How far residents commute to work without a job centre (m). */
 export const COMMUTE_DISTANCE = 800;
@@ -1486,6 +1689,8 @@ export const PRICE: Record<Good, number> = {
   ticket: 0,
   swim: 0,
   ride: 0,
+  game: 0,
+  news: 0,
   hides: 20,
   leather: 120,
   caoutchouc: 45,
@@ -1511,7 +1716,7 @@ export const PRICE: Record<Good, number> = {
   recycled: 70,
 };
 /** Shop prices paid by residents. */
-export const RETAIL_PRICE: Partial<Record<Good, number>> = { bread: 60, meat: 110, furniture: 700, meal: 60, ticket: 35, swim: 25, ride: 30, shoes: 230, clothes: 260, food: 160, pasta: 110, sweets: 150, rice: 90, spices: 190, jewellery: 380 };
+export const RETAIL_PRICE: Partial<Record<Good, number>> = { bread: 60, meat: 110, furniture: 700, meal: 60, ticket: 35, swim: 25, ride: 30, game: 90, news: 9, shoes: 230, clothes: 260, food: 160, pasta: 110, sweets: 150, rice: 90, spices: 190, jewellery: 380 };
 /** Leftover stock is sold off at this share of the price (food to wholesalers, industry exports). */
 export const EXPORT_FACTOR: Record<Good, number> = {
   wheat: 0.6,
@@ -1528,6 +1733,8 @@ export const EXPORT_FACTOR: Record<Good, number> = {
   ticket: 0,
   swim: 0,
   ride: 0,
+  game: 0,
+  news: 0,
   hides: 0.6,
   leather: 0.9,
   caoutchouc: 0,
@@ -1561,9 +1768,11 @@ export const BUSINESS_TAX_MIN = 0.05;
 export const BUSINESS_TAX_MAX = 0.35;
 export const BUSINESS_TAX_DEFAULT = 0.15;
 /** Municipal buildings: the town pays their upkeep (staff included). */
-export const PUBLIC: BuildingKind[] = ["waterworks", "hospital", "school", "church", "powerplant", "transformer", "bank", "townhall", "taxoffice", "jobcenter", "park", "playground", "warehouse", "harbour", "airport", "exchange"];
+export const PUBLIC: BuildingKind[] = ["waterworks", "hospital", "school", "church", "powerplant", "transformer", "bank", "townhall", "taxoffice", "jobcenter", "park", "playground", "warehouse", "harbour", "airport", "exchange", "police", "firestation", "trainstation", "traindepot", "prison", "villa", "boathouse"];
 /** Buildings a town can have only once. */
-export const UNIQUE: BuildingKind[] = ["bank", "townhall", "taxoffice", "exchange"];
+export const UNIQUE: BuildingKind[] = ["bank", "townhall", "taxoffice", "exchange", "villa", "boathouse", "newspaper"];
+/** The mayor's own buildings: paid from his private account, confiscated when he goes to prison. */
+export const MAYOR_PRIVATE: BuildingKind[] = ["villa", "boathouse"];
 
 /**
  * How taxes affect immigration: 10 % income tax → 1.0, 20 % → 0.4, 5 % → 1.3; business tax
@@ -1647,11 +1856,21 @@ export interface Budget {
   gold?: number;
   /** Airport charges and air freight sales. */
   airport: number;
+  /** Police fines and fire-protection levy (residents within reach of a station). */
+  emergency?: number;
+  /** Railway fares and freight. */
+  rail?: number;
+  /** State refund for the prison's inmates. */
+  justice?: number;
+  /** The mayor's salary (from the town to his private account, see mayor.ts). */
+  mayor?: number;
+  /** Business tax the town forgoes for firms the mayor took money from (already left out of businessTax). */
+  favours?: number;
 }
 /** Buildings farther than this from a road have no access. */
 export const ACCESS_DISTANCE = 14;
 
-export const START_MONEY = 40000;
+export const START_MONEY = 350000;
 
 /** Road kinds that carry goods and water pipes. */
 const NETWORK_ROADS = new Set(["street", "highway", "ramp"]);
@@ -1709,6 +1928,11 @@ export interface EconomyStats {
   green: number;
   play: number;
   recreation: Record<string, number>;
+  /** Share of residents within reach of a police / fire station (0..1); residents per station are in `recreation`. */
+  safety: number;
+  fireCover: number;
+  /** Prison places and inmates (all prisons on a road network with a police station). */
+  prison: { places: number; inmates: number };
   mealsServed: number;
   ticketsSold: number;
   furnitureDemand: number;
@@ -1788,10 +2012,28 @@ export interface EconomyStats {
   importOrders: Record<string, ImportOrder[]>;
   /** Road network of every building (null = no access). */
   networkOf: Record<string, number | null>;
+  /** Road network of every street, motorway and ramp. */
+  roadNetworkOf: Record<string, number>;
+  /** Railway: stations, signal boxes, fares and freight (added by the store after `simulate`). */
+  rail?: RailStats;
+  /** What the citizens think of their mayor (0..1) and whether a scandal is running (added by the store, mayor.ts). */
+  mayor?: { score: number; scandal: boolean };
 }
 
-/** Connected road networks: road id → network id. Ramps join the motorways they touch. */
+/**
+ * Connected road networks: road id → network id. Ramps join the motorways they touch.
+ * Cached per road list (roads are replaced, never mutated): the pairwise test of all roads
+ * ran every tick although the roads rarely change.
+ */
+let networkCache: { roads: Road[]; out: Map<string, number> } | null = null;
 export function roadNetworks(roads: Road[]): Map<string, number> {
+  if (networkCache?.roads === roads) return networkCache.out;
+  const out = computeRoadNetworks(roads);
+  networkCache = { roads, out };
+  return out;
+}
+
+function computeRoadNetworks(roads: Road[]): Map<string, number> {
   const usable = roads.filter((r) => NETWORK_ROADS.has(r.kind));
   const parent = usable.map((_, i) => i);
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
@@ -1820,16 +2062,23 @@ export function roadNetworks(roads: Road[]): Map<string, number> {
  * safe key) and per plot position. The economy asks for every building every tick, which
  * was the most expensive part of a tick in big towns.
  */
-let accessCache: { roads: Road[]; byPlot: Map<string, Road | null> } | null = null;
+let accessCache: { roads: Road[]; byPlot: Map<string, Road | null>; byObject: WeakMap<object, Road | null> } | null = null;
 
 /** The road a building is served from (street-like roads only), or null. */
 export function accessRoad(b: { x: number; z: number; rot?: number; kind?: BuildingKind; level?: number }, roads: Road[]): Road | null {
-  if (accessCache?.roads !== roads) accessCache = { roads, byPlot: new Map() };
+  if (accessCache?.roads !== roads) accessCache = { roads, byPlot: new Map(), byObject: new WeakMap() };
+  // Buildings are replaced, never mutated: the object itself is the fastest key.
+  const known = accessCache.byObject.get(b);
+  if (known !== undefined) return known;
   const key = `${b.x},${b.z},${b.rot ?? 0},${b.kind ?? ""},${b.level ?? 1}`;
   const hit = accessCache.byPlot.get(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    accessCache.byObject.set(b, hit);
+    return hit;
+  }
   const road = findAccessRoad(b, roads);
   accessCache.byPlot.set(key, road);
+  accessCache.byObject.set(b, road);
   return road;
 }
 
@@ -1850,6 +2099,16 @@ function findAccessRoad(b: { x: number; z: number; rot?: number; kind?: Building
   }
   return best;
 }
+
+/** Output of farms and mills = what they actually delivered (one pass over the flows). */
+function deliveredOutput(producers: Building[], flows: Flow[], status: Record<string, BuildingStatus>) {
+  const sent = new Map<string, number>();
+  for (const f of flows) sent.set(f.from, (sent.get(f.from) ?? 0) + f.amount);
+  for (const b of producers) status[b.id].output = sent.get(b.id) ?? 0;
+}
+
+/** Nearest wired transformer per plot (see simulate). */
+let supplyCache: { key: string; cables: Cable[]; best: WeakMap<Building, Building | null> } | null = null;
 
 /** One minute of the economy for the current world. */
 export function simulate(
@@ -1908,8 +2167,12 @@ export function simulate(
       output: 0,
       staffing: jobsOf(b) > 0 ? staffingOf(b) : undefined,
       problem:
-        net === null && !ROADLESS_KINDS.includes(b.kind)
+        b.kind === "ruin"
+          ? "Abgebrannt – Ruine abreißen, dann wird das Grundstück wieder bebaut"
+          : net === null && !ROADLESS_KINDS.includes(b.kind)
           ? "Stillgelegt – kein Straßenanschluss (Straße vor dem Gebäude bauen)"
+          : b.kind === "prison" && !buildings.some((p) => p.kind === "police" && netOf.get(p.id) === net)
+          ? "Keine Polizeiwache im Straßennetz – das Gefängnis bleibt leer"
           : b.kind === "harbour" && harbourWater[b.id]
             ? `Stillgelegt – ${harbourWater[b.id]}`
             : water < 0.99
@@ -2011,14 +2274,23 @@ export function simulate(
   const supplyGrid = new Map<string, { grid: number; transformer: string }>();
   const gridDemand = new Map<number, number>();
   let powerDemand = 0;
+  // Nearest wired transformer per building: cached while transformers and cables stay the same
+  // (it was every building × every transformer per tick).
+  const trafoKey = transformers.map((t) => `${t.id},${t.x},${t.z},${t.level},${transformerGrid.get(t.id)}`).join("|");
+  if (supplyCache?.key !== trafoKey || supplyCache.cables !== cables) supplyCache = { key: trafoKey, cables, best: new WeakMap() };
+  const cache = supplyCache;
   for (const b of buildings) {
     const need = powerOf(b);
     if (need <= 0) continue;
     powerDemand += need;
-    let best: Building | null = null;
-    for (const t of transformers) {
-      if (transformerGrid.get(t.id) === null || !transformerReaches(t, b)) continue;
-      if (!best || Math.hypot(t.x - b.x, t.z - b.z) < Math.hypot(best.x - b.x, best.z - b.z)) best = t;
+    let best: Building | null | undefined = cache.best.get(b);
+    if (best === undefined) {
+      best = null;
+      for (const t of transformers) {
+        if (transformerGrid.get(t.id) === null || !transformerReaches(t, b)) continue;
+        if (!best || Math.hypot(t.x - b.x, t.z - b.z) < Math.hypot(best.x - b.x, best.z - b.z)) best = t;
+      }
+      cache.best.set(b, best);
     }
     if (!best) continue;
     const grid = transformerGrid.get(best.id)!;
@@ -2076,11 +2348,21 @@ export function simulate(
     powerSupplied += need * share;
     if (b.kind !== "house" && !PUBLIC.includes(b.kind)) powerFactor.set(b.id, UNPOWERED_WORK + (1 - UNPOWERED_WORK) * share);
   }
+  // Buildings per transformer in one pass.
+  const servedBy = new Map<string, { n: number; load: number }>();
+  for (const b of buildings) {
+    const sg = supplyGrid.get(b.id);
+    if (!sg) continue;
+    const e = servedBy.get(sg.transformer) ?? { n: 0, load: 0 };
+    e.n++;
+    e.load += powerOf(b) * (status[b.id].power ?? 0);
+    servedBy.set(sg.transformer, e);
+  }
   for (const t of transformers) {
     const grid = transformerGrid.get(t.id) ?? null;
-    const served = buildings.filter((b) => supplyGrid.get(b.id)?.transformer === t.id);
-    const load = served.reduce((sum, b) => sum + powerOf(b) * (status[b.id].power ?? 0), 0);
-    status[t.id].transformer = { grid, load, buildings: served.length };
+    const sv = servedBy.get(t.id) ?? { n: 0, load: 0 };
+    const load = sv.load;
+    status[t.id].transformer = { grid, load, buildings: sv.n };
     status[t.id].output = load;
     if (grid === null) status[t.id].problem = "Kein Kabel – mit dem Kabel-Werkzeug ans Kraftwerk anschließen";
     else if ((gridSupply.get(grid) ?? 0) <= 0) status[t.id].problem = "Kein Strom im Netz – Kraftwerk anschließen";
@@ -2227,9 +2509,7 @@ export function simulate(
   const meatDemand = residents * MEAT_PER_RESIDENT;
 
   // Farm and mill output is what was actually delivered.
-  for (const b of [...farms, ...mills]) {
-    status[b.id].output = flows.filter((f) => f.from === b.id).reduce((s, f) => s + f.amount, 0);
-  }
+  deliveredOutput([...farms, ...mills], flows, status);
   const totalOf = (good: Good) =>
     [...farms, ...mills].reduce((s, b) => s + (status[b.id].outputs?.[good]?.made ?? 0), 0);
 
@@ -2536,9 +2816,7 @@ export function simulate(
     st.problem = st.problem ?? (short ? hint[short]! : null);
   }
   // Farms and mills also deliver to the food factories: count that in their output.
-  for (const b of [...farms, ...mills]) {
-    status[b.id].output = flows.filter((f) => f.from === b.id).reduce((s, f) => s + f.amount, 0);
-  }
+  deliveredOutput([...farms, ...mills], flows, status);
   const discountersOn = new Map<number, number>();
   for (const b of discounters) discountersOn.set(netOf.get(b.id)!, (discountersOn.get(netOf.get(b.id)!) ?? 0) + 1);
   let foodSold = 0;
@@ -2753,7 +3031,8 @@ export function simulate(
 
   // Leisure: restaurants (cook with meat and milk) and cinemas serve the residents of their
   // network. Going out makes families: it raises the birth rate.
-  const restaurants = buildings.filter((b) => b.kind === "restaurant" && connected(b));
+  // Pizzerias share the guests with the restaurants but bake with flour instead of meat.
+  const restaurants = buildings.filter((b) => (b.kind === "restaurant" || b.kind === "pizzeria") && connected(b));
   const countOn = (list: Building[]) => {
     const m = new Map<number, number>();
     for (const b of list) m.set(netOf.get(b.id)!, (m.get(netOf.get(b.id)!) ?? 0) + 1);
@@ -2765,22 +3044,26 @@ export function simulate(
     const net = netOf.get(b.id)!;
     const guests = ((residentsOn.get(net) ?? 0) * MEALS_PER_RESIDENT) / (restaurantsOn.get(net) ?? 1);
     const capacity = Math.min(RESTAURANT_CAPACITY * work(b), guests);
-    const meatIn = take(b, "meat", capacity * MEAL_MEAT, slaughterhouses);
+    const pizza = b.kind === "pizzeria";
+    const [main, perMeal] = pizza ? (["flour", PIZZA_FLOUR] as const) : (["meat", MEAL_MEAT] as const);
+    const mainIn = take(b, main, capacity * perMeal, pizza ? mills : slaughterhouses);
     const milkIn = take(b, "milk", capacity * MEAL_MILK, farms);
-    const meals = Math.min(capacity, meatIn.got / MEAL_MEAT, milkIn.got / MEAL_MILK);
-    keep(meatIn.taken, meatIn.got > 0 ? (meals * MEAL_MEAT) / meatIn.got : 0);
+    const meals = Math.min(capacity, mainIn.got / perMeal, milkIn.got / MEAL_MILK);
+    keep(mainIn.taken, mainIn.got > 0 ? (meals * perMeal) / mainIn.got : 0);
     keep(milkIn.taken, milkIn.got > 0 ? (meals * MEAL_MILK) / milkIn.got : 0);
     mealsServed += meals;
     const st = status[b.id];
     st.output = meals;
-    st.inputs = { meat: { need: capacity * MEAL_MEAT, got: meatIn.got }, milk: { need: capacity * MEAL_MILK, got: milkIn.got } };
+    st.inputs = { [main]: { need: capacity * perMeal, got: mainIn.got }, milk: { need: capacity * MEAL_MILK, got: milkIn.got } };
     st.outputs = { meal: { made: meals, max: RESTAURANT_CAPACITY } };
     st.problem =
       st.problem ??
       (guests < 0.05
         ? "Keine Gäste im Straßennetz"
-        : meatIn.got < capacity * MEAL_MEAT * 0.5
-          ? "Zu wenig Fleisch – Schlachthof anschließen"
+        : mainIn.got < capacity * perMeal * 0.5
+          ? pizza
+            ? "Zu wenig Mehl – Mühle anschließen"
+            : "Zu wenig Fleisch – Schlachthof anschließen"
           : milkIn.got < capacity * MEAL_MILK * 0.5
             ? "Zu wenig Milch – Bauernhof anschließen"
             : null);
@@ -2808,17 +3091,17 @@ export function simulate(
   // Pool and fair come on top of going out to eat and to the cinema.
   // Parks and playgrounds: share of residents living within reach of one (on foot, no street).
   const recreation: Record<string, number> = {};
-  const reachShare = (kind: BuildingKind) => {
-    const spots = buildings.filter((b) => b.kind === kind);
+  const reachShare = (kind: BuildingKind, radius = RECREATION_RADIUS[kind]!, onlyConnected = false) => {
+    const spots = buildings.filter((b) => b.kind === kind && (!onlyConnected || status[b.id].connected));
+    for (const b of buildings) if (b.kind === kind) recreation[b.id] = 0;
     if (spots.length === 0 || residents <= 0) return 0;
     let covered = 0;
-    for (const s of spots) recreation[s.id] = 0;
     for (const h of buildings) {
       const r = residentsOf(h);
       if (r <= 0) continue;
       let first = true;
       for (const s of spots) {
-        if (Math.hypot(s.x - h.x, s.z - h.z) > RECREATION_RADIUS[kind]![s.level]) continue;
+        if (Math.hypot(s.x - h.x, s.z - h.z) > radius[s.level]) continue;
         recreation[s.id] += r;
         if (first) covered += r;
         first = false;
@@ -2828,9 +3111,12 @@ export function simulate(
   };
   const green = reachShare("park");
   const play = reachShare("playground");
+  // Police and fire stations only count with a street (their vehicles need one).
+  const safety = reachShare("police", SERVICE_RADIUS.police, true);
+  const fireCover = reachShare("firestation", SERVICE_RADIUS.firestation, true);
   const leisure = Math.min(
     1,
-    (mealShare + ticketShare) / 2 + 0.25 * share("swim", "pool") + 0.25 * share("ride", "fair") + 0.15 * green + 0.1 * play,
+    (mealShare + ticketShare) / 2 + 0.25 * share("swim", "pool") + 0.25 * share("ride", "fair") + 0.1 * share("game", "casino") + 0.15 * green + 0.1 * play,
   );
 
   // Business accounts: every private building with jobs buys its inputs, sells to other
@@ -2841,21 +3127,31 @@ export function simulate(
     butcher: "meat",
     furniturestore: "furniture",
     restaurant: "meal",
+    pizzeria: "meal",
     cinema: "ticket",
     pool: "swim",
     fair: "ride",
+    casino: "game",
+    newspaper: "news",
     shoeshop: "shoes",
     fashion: "clothes",
     discounter: "food",
     jeweller: "jewellery",
   };
   const finances: Record<string, Finance> = {};
+  // Sales and purchases per business in one pass over the flows (was a scan of all flows per business).
+  const soldBy = new Map<string, number>();
+  const boughtBy = new Map<string, number>();
+  for (const f of flows) {
+    const v = f.amount * PRICE[f.good];
+    soldBy.set(f.from, (soldBy.get(f.from) ?? 0) + v);
+    boughtBy.set(f.to, (boughtBy.get(f.to) ?? 0) + v);
+  }
   for (const b of buildings) {
-    if (PUBLIC.includes(b.kind) || b.kind === "house" || !status[b.id].connected) continue;
+    if (PUBLIC.includes(b.kind) || b.kind === "house" || b.kind === "ruin" || !status[b.id].connected) continue;
     const st = status[b.id];
-    const sales = flows.filter((f) => f.from === b.id).reduce((sum, f) => sum + f.amount * PRICE[f.good], 0);
-    const purchases =
-      flows.filter((f) => f.to === b.id).reduce((sum, f) => sum + f.amount * PRICE[f.good], 0) + (imports.get(b.id) ?? 0);
+    const sales = soldBy.get(b.id) ?? 0;
+    const purchases = (boughtBy.get(b.id) ?? 0) + (imports.get(b.id) ?? 0);
     const good = RETAIL_OF[b.kind];
     const retail = good
       ? (b.kind === "discounter" ? SHELF : [good]).reduce((sum, g) => sum + (st.outputs?.[g]?.made ?? 0) * (RETAIL_PRICE[g] ?? 0), 0)
@@ -2994,8 +3290,16 @@ export function simulate(
   }
   const goldCost = goldIn * PRICE.gold * EXPORT_FACTOR.gold;
   const upkeep = Object.values(services).reduce((sum, v) => sum + (v ?? 0), 0) + storageCost + goldCost;
-  const income = incomeTax + businessTax + propertyTax + waterFees + powerFees + airportIncome;
-  const budget: Budget = { incomeTax, businessTax, propertyTax, waterFees, powerFees, services, storage: storageCost, gold: goldCost, airport: airportIncome };
+  // Prisons work with the police of their road network: inmates come from the residents there.
+  const policeNets = new Set(buildings.filter((b) => b.kind === "police" && status[b.id].connected).map((b) => netOf.get(b.id)));
+  let places = 0;
+  for (const b of buildings) if (b.kind === "prison" && status[b.id].connected && policeNets.has(netOf.get(b.id))) places += PRISON_PLACES * levelFactor(b);
+  const inmates = Math.min(places, residents * INMATES_PER_RESIDENT);
+  const prisonBonus = places > 0 ? PRISON_POLICE_BONUS : 0;
+  const justiceIncome = inmates * PRISON_REFUND;
+  const emergencyIncome = residents * (safety * POLICE_FINES * (1 + prisonBonus) + fireCover * FIRE_LEVY);
+  const income = incomeTax + businessTax + propertyTax + waterFees + powerFees + airportIncome + emergencyIncome + justiceIncome;
+  const budget: Budget = { incomeTax, businessTax, propertyTax, waterFees, powerFees, services, storage: storageCost, gold: goldCost, airport: airportIncome, emergency: emergencyIncome, justice: justiceIncome };
   const powered = powerDemand > 0 ? Math.min(1, powerSupplied / powerDemand) : 1;
 
   // Growth: births need a hospital on the residents' network; immigration needs water,
@@ -3027,7 +3331,7 @@ export function simulate(
   // Electric light and appliances: towns with power attract more people.
   const powerFactorTown = 0.85 + 0.25 * powered;
   const immigration = waterOk
-    ? IMMIGRATION * (breadOk ? 1 : 0.35) * taxFactor * jobFactor * schoolFactor * homeFactor * foodFactor * (0.9 + 0.2 * leisure) * (0.95 + 0.1 * shod) * (0.95 + 0.1 * dressed) * (0.95 + 0.1 * fed) * (0.97 + 0.06 * spiced) * (0.98 + 0.04 * adorned) * (0.97 + 0.06 * green) * (0.98 + 0.04 * play) * (1 + 0.1 * holiday) * powerFactorTown * 2
+    ? IMMIGRATION * (breadOk ? 1 : 0.35) * taxFactor * jobFactor * schoolFactor * homeFactor * foodFactor * (0.9 + 0.2 * leisure) * (0.95 + 0.1 * shod) * (0.95 + 0.1 * dressed) * (0.95 + 0.1 * fed) * (0.97 + 0.06 * spiced) * (0.98 + 0.04 * adorned) * (0.97 + 0.06 * green) * (0.98 + 0.04 * play) * (1 + 0.1 * holiday) * (0.96 + 0.08 * safety) * (0.97 + 0.06 * fireCover) * powerFactorTown * 2
     : 0;
   // What keeps houses from growing past level 2, with the numbers (all of it, not just the first).
   const pctOf = (v: number) => `${Math.floor(v * 1000) / 10} %`.replace(".", ",");
@@ -3081,6 +3385,9 @@ export function simulate(
     green,
     play,
     recreation,
+    safety: Math.min(1, safety * (1 + prisonBonus)),
+    fireCover,
+    prison: { places, inmates },
     mealsServed,
     ticketsSold,
     furnitureDemand,
@@ -3117,6 +3424,7 @@ export function simulate(
     importOut,
     importOrders,
     networkOf: Object.fromEntries(netOf),
+    roadNetworkOf: Object.fromEntries(networks),
   };
 }
 

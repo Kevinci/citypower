@@ -1,5 +1,6 @@
 import { useEffect, useMemo, type RefObject } from "react";
 import * as THREE from "three";
+import { hiddenByBatcher, unitSignature } from "./StaticBatcher";
 
 /**
  * Contact shadows ("ambient occlusion" at the foot of buildings): a soft dark rim on the
@@ -89,35 +90,74 @@ function addPart(mesh: THREE.InstancedMesh, margins: Float32Array, n: number, bo
   return n + 1;
 }
 
+/** Shadows of one building, kept while the building's batch signature stays the same. */
+const unitCache = new WeakMap<THREE.Object3D, { signature: number; matrices: Float32Array; margins: Float32Array }>();
+const scratch = new THREE.InstancedMesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial(), 256);
+const scratchMargins = new Float32Array(256);
+
+/** The static, shadow-casting parts of one building (`userData.base` group). */
+function collectUnit(unit: THREE.Object3D) {
+  const baseY = unit.getWorldPosition(pos).y;
+  let n = 0;
+  const walk = (o: THREE.Object3D) => {
+    for (const c of o.children) {
+      if (n >= 256) return;
+      const m = c as THREE.Mesh;
+      // Batched parts are hidden (StaticBatcher draws them) but still cast contact shadows.
+      if (m.isMesh && (c.visible || c.userData.batched) && m.castShadow && !(m as THREE.InstancedMesh).isInstancedMesh && !(m as THREE.SkinnedMesh).isSkinnedMesh) {
+        const material = m.material as THREE.Material;
+        if (material && !material.transparent) {
+          if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+          n = addPart(scratch, scratchMargins, n, m.geometry.boundingBox!, m.matrixWorld, baseY);
+        }
+      }
+      if (c.visible || hiddenByBatcher(c)) walk(c);
+    }
+  };
+  walk(unit);
+  return { matrices: (scratch.instanceMatrix.array as Float32Array).slice(0, n * 16), margins: scratchMargins.slice(0, n) };
+}
+
 /** Collects the contact shadows of all buildings below `root`. */
 function collect(mesh: THREE.InstancedMesh, root: THREE.Object3D) {
-  root.updateWorldMatrix(true, true);
   const margins = (mesh.geometry.getAttribute("aMargin") as THREE.InstancedBufferAttribute).array as Float32Array;
+  const matrices = mesh.instanceMatrix.array as Float32Array;
   let n = 0;
-  root.traverse((o) => {
-    if (n >= CAPACITY || !(o as THREE.Mesh).isMesh || !o.visible) return;
-    const m = o as THREE.Mesh;
-    if (m.userData.contact && (m as THREE.InstancedMesh).isInstancedMesh) {
-      const im = m as THREE.InstancedMesh;
-      if (!im.geometry.boundingBox) im.geometry.computeBoundingBox();
-      for (let i = 0; i < im.count && n < CAPACITY; i++) {
-        im.getMatrixAt(i, instance);
-        world.multiplyMatrices(im.matrixWorld, instance);
-        const box = im.geometry.boundingBox!;
-        n = addPart(mesh, margins, n, box, world, c0.set(0, box.min.y, 0).applyMatrix4(world).y);
+  const walk = (o: THREE.Object3D) => {
+    for (const c of o.children) {
+      if (n >= CAPACITY) return;
+      if (c.userData.base) {
+        // Unchanged buildings (same batch signature) reuse their shadows: only new or changed
+        // ones are measured again (it was a walk over every part of the town per new house).
+        const signature = unitSignature.get(c);
+        let hit = unitCache.get(c);
+        if (!hit || signature === undefined || hit.signature !== signature) {
+          c.updateWorldMatrix(true, true);
+          hit = { signature: signature ?? NaN, ...collectUnit(c) };
+          unitCache.set(c, hit);
+        }
+        const count = Math.min(hit.margins.length, CAPACITY - n);
+        matrices.set(hit.matrices.subarray(0, count * 16), n * 16);
+        margins.set(hit.margins.subarray(0, count), n);
+        n += count;
+        continue;
       }
-      return;
+      const im = c as THREE.InstancedMesh;
+      if (im.isInstancedMesh && c.visible && c.userData.contact) {
+        c.updateWorldMatrix(true, false);
+        if (!im.geometry.boundingBox) im.geometry.computeBoundingBox();
+        for (let i = 0; i < im.count && n < CAPACITY; i++) {
+          im.getMatrixAt(i, instance);
+          world.multiplyMatrices(im.matrixWorld, instance);
+          const box = im.geometry.boundingBox!;
+          n = addPart(mesh, margins, n, box, world, c0.set(0, box.min.y, 0).applyMatrix4(world).y);
+        }
+        continue;
+      }
+      if (c.visible) walk(c);
     }
-    if (!m.castShadow || (m as THREE.InstancedMesh).isInstancedMesh || (m as THREE.SkinnedMesh).isSkinnedMesh) return;
-    const material = m.material as THREE.Material;
-    if (!material || material.transparent) return;
-    let base: THREE.Object3D | null = m.parent;
-    while (base && !base.userData.base) base = base.parent;
-    if (!base) return;
-    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
-    const baseY = base.getWorldPosition(pos).y;
-    n = addPart(mesh, margins, n, m.geometry.boundingBox!, m.matrixWorld, baseY);
-  });
+  };
+  walk(root);
   mesh.count = n;
   mesh.instanceMatrix.clearUpdateRanges();
   mesh.instanceMatrix.needsUpdate = true;
@@ -138,10 +178,14 @@ export function GroundShadows({ root, version }: { root: RefObject<THREE.Group |
 
   useEffect(() => {
     const run = () => root.current && collect(mesh, root.current);
-    run();
-    // Some parts (models, suspended subtrees) appear a moment later.
+    // Shortly after the change (the batcher has then seen the new or changed buildings; several
+    // changes in a row are one run), and once more for parts that appear later (loaded models).
+    const soon = setTimeout(run, 250);
     const later = setTimeout(run, 1500);
-    return () => clearTimeout(later);
+    return () => {
+      clearTimeout(soon);
+      clearTimeout(later);
+    };
   }, [mesh, root, version]);
 
   useEffect(

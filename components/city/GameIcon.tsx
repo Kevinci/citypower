@@ -412,6 +412,145 @@ const ICONS: Record<string, ReactNode> = {
       <rect x="17" y="13.5" width="2.5" height="2.5" fill="#7fb3d5" {...S} />
     </>
   ),
+  /** Police station: white block with a blue band, star badge and blue light. */
+  police: (
+    <>
+      <rect x="3" y="7" width="18" height="14" fill="#f4f6f8" {...S} />
+      <rect x="3" y="7" width="18" height="3" fill="#1f4e8c" {...S} />
+      <rect x="10" y="15" width="4" height="6" fill="#2c3640" {...S} />
+      <rect x="5" y="12" width="3" height="2.6" fill="#7fb3d5" {...S} />
+      <rect x="16" y="12" width="3" height="2.6" fill="#7fb3d5" {...S} />
+      <path d="M12 2.2l1 2.1 2.3.3-1.7 1.6.4 2.3-2-1.1-2 1.1.4-2.3-1.7-1.6 2.3-.3z" fill="#f2c230" {...S} />
+    </>
+  ),
+  /** Fire station: hall with red roller doors and the hose tower. */
+  firestation: (
+    <>
+      <rect x="2.5" y="9" width="14" height="12" fill="#f4f6f8" {...S} />
+      <rect x="2.5" y="9" width="14" height="2.2" fill="#c0272d" {...S} />
+      <rect x="4.5" y="13.5" width="4" height="7.5" fill="#c0272d" {...S} />
+      <rect x="10.5" y="13.5" width="4" height="7.5" fill="#c0272d" {...S} />
+      <path d="M5.5 15.5h2M5.5 17.5h2M11.5 15.5h2M11.5 17.5h2" stroke="#7a1b17" strokeWidth="1" />
+      <rect x="16.5" y="4" width="5" height="17" fill="#f4f6f8" {...S} />
+      <rect x="16.5" y="3" width="5" height="1.8" fill="#c0272d" {...S} />
+      <path d="M19 4v-2.5" {...S} />
+    </>
+  ),
+  /** Prison: block behind bars with a watchtower. */
+  prison: (
+    <>
+      <rect x="3" y="8" width="14" height="13" fill="#b9bcc4" {...S} />
+      <path d="M6 8v13M9.5 8v13M13 8v13" stroke="#2c3640" strokeWidth="1.4" />
+      <rect x="17" y="5" width="4.5" height="16" fill="#f1ece0" {...S} />
+      <rect x="16.3" y="3" width="6" height="2.5" fill="#4a5560" {...S} />
+      <path d="M2 21.5h20" {...S} />
+    </>
+  ),
+  /** Boathouse: wooden house on a jetty with a speedboat on the water. */
+  boathouse: (
+    <>
+      <rect x="3" y="6" width="10" height="7" fill="#b98352" {...S} />
+      <rect x="2.5" y="4.5" width="11" height="2" fill="#3d4650" {...S} />
+      <rect x="5" y="8.5" width="5" height="3" fill="#7fb3d5" {...S} />
+      <rect x="2" y="13" width="20" height="1.6" fill="#8a6a44" {...S} />
+      <rect x="1.5" y="16" width="21" height="6" fill="#4fc3e8" {...S} />
+      <path d="M12 17.5h8.5l-2 2.5h-6.5z" fill="#fff" {...S} />
+      <path d="M14.5 17.5l1-1.5h2l.8 1.5" fill="#1a8fc8" {...S} />
+    </>
+  ),
+  /** Newspaper: a folded paper with a headline and columns. */
+  newspaper: (
+    <>
+      <rect x="3" y="4" width="16" height="16" rx="1" fill="#f6f0e1" {...S} />
+      <path d="M19 8h2v10.5a1.5 1.5 0 0 1-3 0" fill="#e6dcc4" {...S} />
+      <rect x="5" y="6.5" width="12" height="2.4" fill="#22201c" />
+      <path d="M5 11h5M5 13h5M5 15h5M5 17h5" stroke="#5b6670" strokeWidth="1" />
+      <rect x="11.5" y="10.5" width="5.5" height="5" fill="#8a1c1c" />
+    </>
+  ),
+  /** Pizzeria: a pizza slice with salami. */
+  pizzeria: (
+    <>
+      <path d="M12 21 3.5 5.5Q12 1.5 20.5 5.5z" fill="#f2c45a" {...S} />
+      <path d="M4.6 7.3Q12 3.8 19.4 7.3" fill="none" stroke="#c97a2b" strokeWidth="1.8" />
+      <circle cx="10" cy="9.5" r="1.6" fill="#c0272d" {...S} />
+      <circle cx="14.2" cy="10.5" r="1.5" fill="#c0272d" {...S} />
+      <circle cx="12" cy="14.5" r="1.3" fill="#c0272d" {...S} />
+    </>
+  ),
+  /** Casino: roulette wheel with gold rim. */
+  casino: (
+    <>
+      <circle cx="12" cy="12" r="9.5" fill="#c9a227" {...S} />
+      <circle cx="12" cy="12" r="7" fill="#1f6b3a" {...S} />
+      <path d="M12 5v14M5 12h14M7 7l10 10M17 7 7 17" stroke="#c0272d" strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="2.4" fill="#c9a227" {...S} />
+      <circle cx="16.2" cy="9" r="1" fill="#fff" {...S} />
+    </>
+  ),
+  /** Mayor's villa: flat-roofed white cube with glass, pool in front, gold star. */
+  villa: (
+    <>
+      <rect x="3" y="9" width="12" height="9" fill="#f4f6f8" {...S} />
+      <rect x="9" y="5" width="10" height="6" fill="#f4f6f8" {...S} />
+      <rect x="2.5" y="8.2" width="13" height="1.6" fill="#3d4650" {...S} />
+      <rect x="8.5" y="4.2" width="11" height="1.6" fill="#3d4650" {...S} />
+      <rect x="5" y="11.5" width="7" height="4" fill="#7fb3d5" {...S} />
+      <rect x="11" y="7" width="6" height="2.6" fill="#7fb3d5" {...S} />
+      <rect x="2" y="18.5" width="20" height="3" rx="0.8" fill="#4fc3e8" {...S} />
+      <path d="M19.5 12.2l.8 1.6 1.7.2-1.3 1.2.3 1.7-1.5-.8-1.5.8.3-1.7-1.3-1.2 1.7-.2z" fill="#f2c230" {...S} />
+    </>
+  ),
+  /** Station: platform roof over a track, clock. */
+  trainstation: (
+    <>
+      <rect x="3" y="9" width="18" height="11" fill="#b8573e" {...S} />
+      <path d="M2 9.5 12 4l10 5.5z" fill="#a8432c" {...S} />
+      <circle cx="12" cy="13" r="2.3" fill="#fff" {...S} />
+      <rect x="2" y="20" width="20" height="1.8" fill="#6b7a85" {...S} />
+      <rect x="5" y="15" width="3" height="3" fill="#7fb3d5" {...S} />
+      <rect x="16" y="15" width="3" height="3" fill="#7fb3d5" {...S} />
+    </>
+  ),
+  /** Signal box: brick base, glazed control room, roof. */
+  traindepot: (
+    <>
+      <rect x="6" y="12" width="12" height="9" fill="#b8573e" {...S} />
+      <rect x="5" y="7.5" width="14" height="4.5" fill="#7fb3d5" {...S} />
+      <path d="M4 7.8 12 3l8 4.8z" fill="#a8432c" {...S} />
+      <path d="M2 21.5h20" {...S} />
+      <circle cx="20" cy="15" r="1.2" fill="#2c8f4e" />
+      <circle cx="20" cy="18" r="1.2" fill="#c0392b" />
+    </>
+  ),
+  /** Train seen from the side. */
+  train: (
+    <>
+      <rect x="2.5" y="7" width="19" height="10" rx="2.5" fill="#e8eef2" {...S} />
+      <rect x="5" y="9.5" width="3.5" height="3" fill="#7fb3d5" {...S} />
+      <rect x="10.2" y="9.5" width="3.5" height="3" fill="#7fb3d5" {...S} />
+      <rect x="15.5" y="9.5" width="3.5" height="3" fill="#7fb3d5" {...S} />
+      <rect x="2.5" y="13.5" width="19" height="1.6" fill="#c0392b" />
+      <circle cx="7" cy="18.5" r="1.6" fill="#2c3640" />
+      <circle cx="17" cy="18.5" r="1.6" fill="#2c3640" />
+    </>
+  ),
+  /** Burnt-out house: charred walls without a roof. */
+  ruin: (
+    <>
+      <path d="M4 21V11l3-2 2 2 3-3 3 2 2-1 3 2v10z" fill="#4a4441" {...S} />
+      <path d="M7 21v-5h3v5M14 14h3v3h-3z" fill="#1f1c1b" {...S} />
+      <path d="M9 6c0-2 2-2 2-4M14 6c0-1.5 1.5-1.5 1.5-3" fill="none" stroke="#8d8d8d" strokeWidth="1.2" strokeLinecap="round" />
+    </>
+  ),
+  /** Blue light (emergency). */
+  bluelight: (
+    <>
+      <path d="M5 16a7 7 0 0 1 14 0v2H5z" fill="#1a8fc8" {...S} />
+      <rect x="3.5" y="18" width="17" height="2.5" fill="#2c3640" {...S} />
+      <path d="M12 3.5v2.5M5.5 6.5l1.8 1.8M18.5 6.5l-1.8 1.8" fill="none" stroke="#1a8fc8" strokeWidth="1.6" strokeLinecap="round" />
+    </>
+  ),
   hospital: (
     <>
       <rect x="3" y="6" width="18" height="15" fill="#f4f6f8" {...S} />

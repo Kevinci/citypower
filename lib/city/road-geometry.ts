@@ -308,20 +308,33 @@ export function buildRoadLayers(
   if (frames.length < 2) return {};
 
   // Curbs and sidewalks stop just outside the junction plaza, markings stop at its edge.
-  const cuts = junctions.filter((j) => j.cut);
+  // Each road is cut back only as far as the widest *other* road at the junction
+  // reaches: a cycle path crossing a street interrupts its sidewalk by 3 m, not by 8 m.
+  const cutRadius = (j: Junction) => {
+    if (!j.widths || !roadId) return j.radius;
+    let r = 0;
+    for (const [id, w] of j.widths) if (id !== roadId) r = Math.max(r, w);
+    return r || j.radius;
+  };
+  // Only junctions near this road, with their radius worked out once: every vertex of every
+  // band is tested (it was all junctions of the town × the radius search per test).
+  let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
+  for (const f of frames) {
+    if (f.p.x < bx0) bx0 = f.p.x;
+    if (f.p.x > bx1) bx1 = f.p.x;
+    if (f.p.z < bz0) bz0 = f.p.z;
+    if (f.p.z > bz1) bz1 = f.p.z;
+  }
+  const cuts = junctions
+    .filter((j) => j.cut)
+    .map((j) => ({ j, r: cutRadius(j) }))
+    .filter(({ j, r }) => {
+      const reach = Math.max(r, j.radius) + 30;
+      return j.x >= bx0 - reach && j.x <= bx1 + reach && j.z >= bz0 - reach && j.z <= bz1 + reach;
+    });
   const nearJunction = (extra: number): Skip => {
-    // Each road is cut back only as far as the widest *other* road at the junction
-    // reaches: a cycle path crossing a street interrupts its sidewalk by 3 m, not by 8 m.
-    const cutRadius = (j: Junction) => {
-      if (!j.widths || !roadId) return j.radius;
-      let r = 0;
-      for (const [id, w] of j.widths) if (id !== roadId) r = Math.max(r, w);
-      return r || j.radius;
-    };
     return (p) =>
-      cuts.some((j) =>
-        j.test ? j.test(p.x, p.z, extra) : (p.x - j.x) ** 2 + (p.z - j.z) ** 2 < (cutRadius(j) + extra) ** 2,
-      );
+      cuts.some(({ j, r }) => (j.test ? j.test(p.x, p.z, extra) : (p.x - j.x) ** 2 + (p.z - j.z) ** 2 < (r + extra) ** 2));
   };
   const edgeSkip = nearJunction(0.5);
   const markingSkip = nearJunction(0);

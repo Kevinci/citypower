@@ -33,9 +33,25 @@ export function moodFactors(e: EconomyStats): MoodFactor[] {
     { id: "spiced", label: "Reis & Gewürze", score: e.spiced, weight: 0.6, complaint: "Kein Reis, keine Gewürze – Kontor am Hafen + Discounter" },
     // Only once there is an airport: holidaymakers come back in a good mood.
     ...(e.airport ? [{ id: "holiday", label: "Urlaub", score: e.holiday, weight: 0.8, complaint: "Flüge ausgebucht – Flughafen ausbauen" }] : []),
+    ...(e.rail && Object.keys(e.rail.stations).length > 0
+      ? [{ id: "transit", label: "Bahnanschluss", score: e.rail.transit, weight: 0.6, complaint: "Kaum Bahnanschluss – Bahnhöfe und Züge fehlen" }]
+      : []),
+    { id: "safety", label: "Sicherheit", score: e.safety, weight: 1, complaint: "Keine Polizei in der Nähe – Polizeiwache bauen" },
+    { id: "fire", label: "Brandschutz", score: e.fireCover, weight: 0.8, complaint: "Keine Feuerwache in der Nähe – Häuser brennen ab" },
     { id: "green", label: "Grünflächen", score: e.green, weight: 0.6, complaint: "Kein Park in der Nähe – Stadtpark bauen" },
     { id: "play", label: "Spielplätze", score: e.play, weight: 0.4, complaint: "Die Kinder haben keinen Spielplatz in der Nähe" },
     { id: "leisure", label: "Freizeit", score: e.leisure, weight: 1, complaint: "Langeweile – Restaurants, Kino, Schwimmbad oder Jahrmarkt fehlen" },
+    ...(e.mayor
+      ? [
+          {
+            id: "mayor",
+            label: "Bürgermeister",
+            score: e.mayor.score,
+            weight: e.mayor.scandal ? 3 : 1,
+            complaint: e.mayor.scandal ? "Korruptionsskandal – die Bürger fühlen sich betrogen" : "Gerüchte über Bestechung und ein zu hohes Gehalt des Bürgermeisters",
+          },
+        ]
+      : []),
     {
       id: "taxes",
       label: "Steuern",

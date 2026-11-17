@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { Building } from "@/lib/city/economy";
 import { shipType, type Ship, type ShipType } from "@/lib/city/shipping";
@@ -46,7 +46,8 @@ const DRAFT = 1.5;
 const VISIBLE = 0.7;
 const FREEBOARD = 1.4;
 
-function ShipModel({ type, loaded }: { type: ShipType; loaded: boolean }) {
+/** Memoised: the fleet list changes every tick, the model only with type and cargo. */
+const ShipModel = memo(function ShipModel({ type, loaded }: { type: ShipType; loaded: boolean }) {
   const hull = useMemo(() => hullGeometry(type.length, type.beam, DRAFT + FREEBOARD), [type]);
   const boot = useMemo(() => hullGeometry(type.length + 0.1, type.beam + 0.1, DRAFT + 0.25), [type]);
   useEffect(
@@ -90,7 +91,7 @@ function ShipModel({ type, loaded }: { type: ShipType; loaded: boolean }) {
       <mesh geometry={box} material={hullMat} position={[-L / 2 + 3.2, FREEBOARD + 4.6, 0]} scale={[0.3, 2.2, 0.3]} />
     </group>
   );
-}
+});
 
 interface Route {
   /** Deep-water route from in front of the harbour to the map edge, with arc lengths. */
@@ -100,6 +101,16 @@ interface Route {
 
 /** Ships moor one after the other in the channel, this far apart (metres along the route). */
 const BERTH_SPACING = 75;
+
+const routeCache = new WeakMap<DepthGrid, Map<string, Route>>();
+function cachedRoute(h: Building, grid: DepthGrid): Route {
+  let byPlace = routeCache.get(grid);
+  if (!byPlace) routeCache.set(grid, (byPlace = new Map()));
+  const key = `${h.x},${h.z},${h.rot},${h.level}`;
+  let r = byPlace.get(key);
+  if (!r) byPlace.set(key, (r = routeOf(h, grid)));
+  return r;
+}
 
 function routeOf(h: Building, grid: DepthGrid): Route {
   const raw = routeToEdge(harbourMouth(h), grid);
@@ -186,7 +197,9 @@ export function Ships() {
   const buildings = useCity((s) => s.buildings);
   const grid = useDepthGrid();
   const harbours = useMemo(() => buildings.filter((b) => b.kind === "harbour"), [buildings]);
-  const routes = useMemo(() => new Map(harbours.map((h) => [h.id, routeOf(h, grid)])), [harbours, grid]);
+  // Routes only depend on the harbour's place and the water: cached, so a new house anywhere
+  // does not run the path search to the map edge again (~25 ms per harbour).
+  const routes = useMemo(() => new Map(harbours.map((h) => [h.id, cachedRoute(h, grid)])), [harbours, grid]);
   const targets = useMemo(() => {
     const out = new Map<string, ReturnType<typeof shipTarget>>();
     for (const h of harbours) {

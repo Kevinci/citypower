@@ -20,8 +20,10 @@
 | `../textures/metal_plate_*` | [Metal Plate](https://polyhaven.com/a/metal_plate) | Poly Haven | CC0 |
 | `../textures/sandstone_brick_wall_01_*` | [Sandstone Brick Wall 01](https://polyhaven.com/a/sandstone_brick_wall_01) | Poly Haven | CC0 |
 | `../textures/forest_leaves_02_*` | [Forest Leaves 02](https://polyhaven.com/a/forest_leaves_02) | Poly Haven | CC0 |
-| `../hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr` | [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) | Poly Haven | CC0 |
-| `vehicles/cars/*.glb`, `vehicles/cars/Textures/colormap.png` | [Car Kit](https://kenney.nl/assets/car-kit) | Kenney | CC0 |
+| `../hdri/kloofendal_48d_partly_cloudy_puresky_2k.hdr` (sky light only) | [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) | Poly Haven | CC0 |
+| `../sky/skybox-day.jpg`, `skybox-morning.jpg`, `skybox-night.jpg` (equirectangular panoramas, reduced to 2048 px JPEG; day/night sky dome) | [Skyboxes 1.0](https://kenney.nl/assets/skyboxes) | Kenney | CC0 |
+| `vehicles/cars/*.glb`, `vehicles/cars/Textures/colormap.png` (cars, police, fire engine, cones and crash debris; Car Kit 3.1) | [Car Kit](https://kenney.nl/assets/car-kit) | Kenney | CC0 |
+| `trains/*.glb` + `trains/Textures/colormap.png` (locomotives, multiple units, freight wagons) | [Train Kit 1.1](https://kenney.nl/assets/train-kit) | Kenney (with Guus Vermeulen, Tony Schaer) | CC0 |
 | `city/suburban/*.glb` + `Textures/` (colormap, variation-a/b/c) | [City Kit (Suburban) 2.0](https://kenney.nl/assets/city-kit-suburban) | Kenney | CC0 |
 | `city/commercial/*.glb` + `Textures/` (colormap, variation-a/b) | [City Kit (Commercial) 2.1](https://kenney.nl/assets/city-kit-commercial) | Kenney | CC0 |
 | `city/industrial/*.glb` + `Textures/` (colormap, variation-a/b/c) | [City Kit (Industrial) 2.0](https://kenney.nl/assets/city-kit-industrial) | Kenney | CC0 |

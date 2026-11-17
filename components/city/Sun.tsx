@@ -1,8 +1,10 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import * as THREE from "three";
+import { daylightAt } from "@/lib/city/daylight";
+import { clockMinutes } from "@/lib/city/store";
 
-/** Direction towards the sun (afternoon, from the south-east). */
+/** Direction towards the light: the sun by day, the moon at night (set per frame from the game clock). */
 const SUN_DIR = new THREE.Vector3(140, 160, 60).normalize();
 const SHADOW_MAP = 2048;
 /** Distance of the light from the shadow centre; the shadow camera spans twice that. */
@@ -57,13 +59,23 @@ function followView(light: THREE.DirectionalLight, camera: THREE.Camera, target:
   light.position.copy(centre).addScaledVector(SUN_DIR, LIGHT_DISTANCE);
 }
 
+/** Sun position, strength and colour for the game clock (day: warm sun, night: faint blue moon). */
+function followClock(light: THREE.DirectionalLight, gameMinutes: number) {
+  const d = daylightAt(gameMinutes);
+  SUN_DIR.set(d.lightDir[0], d.lightDir[1], d.lightDir[2]);
+  light.intensity = d.lightIntensity;
+  light.color.setRGB(d.lightColor[0], d.lightColor[1], d.lightColor[2]);
+}
+
 /** The sun: one shadow-casting directional light whose shadows follow the camera. */
 export function Sun() {
   const light = useRef<THREE.DirectionalLight>(null);
 
   useFrame((state) => {
     const controls = state.controls as unknown as { target: THREE.Vector3 } | null;
-    if (light.current && controls) followView(light.current, state.camera, controls.target);
+    if (!light.current) return;
+    followClock(light.current, clockMinutes());
+    if (controls) followView(light.current, state.camera, controls.target);
   });
 
   return (

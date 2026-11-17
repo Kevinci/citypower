@@ -138,7 +138,7 @@ function Steam({ x, y, z, size }: { x: number; y: number; z: number; size: numbe
     });
   });
   return (
-    <group ref={group} position={[x, y, z]}>
+    <group ref={group} position={[x, y, z]} userData={{ dynamic: true }}>
       {[0, 1, 2, 3, 4].map((i) => (
         <mesh key={i} material={m.steam}>
           <sphereGeometry args={[1, 12, 10]} />

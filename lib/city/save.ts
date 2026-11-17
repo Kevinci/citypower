@@ -5,6 +5,10 @@ import type { Cable, Canal, Rail, Road } from "./types";
 import type { Loan } from "./finance";
 import type { StatSample } from "./wellbeing";
 import type { Permits } from "./growth";
+import type { Incident } from "./incidents";
+import type { MayorState } from "./mayor";
+import type { Edition, NewsEvent } from "./news";
+import type { Train } from "./railway";
 
 /**
  * Saved games. A save holds everything the player built plus the world seed (terrain,
@@ -48,9 +52,19 @@ export interface SaveGame {
   /** Warehouse stock, ships and recent cargo sales; missing in older saves. */
   storage?: Storage;
   ships?: Ship[];
+  /** Trains of the signal boxes; missing in older saves. */
+  trains?: Train[];
   shipSales?: ShipSale[];
   /** Gold bars in the bank's vault; missing in older saves. */
   gold?: number;
+  /** Open accidents and fires; missing in older saves. */
+  incidents?: Incident[];
+  /** Private account, salary, bribes, suspicion of the mayor. */
+  mayor?: Partial<MayorState>;
+  /** Newspaper: recent events, printed editions, last edition read. */
+  newsLog?: NewsEvent[];
+  newspapers?: Edition[];
+  newsRead?: number;
   /** Plot layout revision the save was written with; missing = 1. */
   layout?: number;
   /** For the slot list. */
@@ -84,8 +98,14 @@ export function parseSave(raw: unknown): SaveGame | null {
     storage: s.storage && typeof s.storage === "object" ? s.storage : {},
     layout: typeof s.layout === "number" ? s.layout : 1,
     ships: Array.isArray(s.ships) ? s.ships : [],
+    trains: Array.isArray(s.trains) ? s.trains : [],
     shipSales: Array.isArray(s.shipSales) ? s.shipSales : [],
     gold: typeof s.gold === "number" && s.gold >= 0 ? s.gold : 0,
+    incidents: Array.isArray(s.incidents) ? s.incidents : [],
+    mayor: s.mayor && typeof s.mayor === "object" ? s.mayor : undefined,
+    newsLog: Array.isArray(s.newsLog) ? s.newsLog : [],
+    newspapers: Array.isArray(s.newspapers) ? s.newspapers : [],
+    newsRead: typeof s.newsRead === "number" ? s.newsRead : 0,
     summary: s.summary ?? { residents: 0 },
   };
 }

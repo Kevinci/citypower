@@ -5,6 +5,35 @@ import { loadTiling } from "@/lib/city/materials";
 import { useCity } from "@/lib/city/store";
 import { TERRAIN_N, TERRAIN_RES, WATER_LEVEL, WORLD_HALF, type DepthGrid } from "@/lib/city/terrain";
 import { useShapedGrid } from "./useProfiles";
+
+/** Value noise and fbm of the ground shader (vertex and fragment stage use the same code). */
+const GROUND_NOISE = /* glsl */ `
+        float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float gNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(gHash(i), gHash(i + vec2(1.0, 0.0)), u.x),
+                     mix(gHash(i + vec2(0.0, 1.0)), gHash(i + vec2(1.0, 1.0)), u.x), u.y);
+        }
+        // Each octave is rotated (~37°) and shifted, so the value noise never lines up with
+        // the axes – otherwise faint square blotches show on large meadows.
+        float gFbm(vec2 p) {
+          const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+          float v = 0.0;
+          float a = 0.5;
+          for (int k = 0; k < 4; k++) { v += a * gNoise(p); p = rot * p * 2.03 + vec2(17.3, 9.1); a *= 0.5; }
+          return v;
+        }
+        // Six octaves for the large meadow structure (smooth from 1 km down to a few metres).
+        float gFbm6(vec2 p) {
+          const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+          float v = 0.0;
+          float a = 0.5;
+          for (int k = 0; k < 6; k++) { v += a * gNoise(p); p = rot * p * 2.07 + vec2(11.7, 23.3); a *= 0.5; }
+          return v / 0.984;
+        }
+`;
 /** Real-world size of one repeat of the grass detail texture. */
 const DETAIL_TILE = 9;
 
@@ -34,10 +63,29 @@ function createGroundMaterial() {
     shader.uniforms.uStylized = stylized;
 
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vGroundWorld;\nvarying vec3 vGroundNormal;")
+      .replace(
+        "#include <common>",
+        `#include <common>
+        varying vec3 vGroundWorld;
+        varying vec3 vGroundNormal;
+        // Large-scale meadow fields (75 m … 1 km): computed per vertex (every 2 m) instead of per
+        // pixel – they change far too slowly for the difference to show, and cost a fraction.
+        varying vec2 vWarped;
+        varying vec3 vFields;
+${GROUND_NOISE}`,
+      )
       .replace(
         "#include <worldpos_vertex>",
-        "#include <worldpos_vertex>\nvGroundWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvGroundNormal = normalize(mat3(modelMatrix) * objectNormal);",
+        `#include <worldpos_vertex>
+        vGroundWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vGroundNormal = normalize(mat3(modelMatrix) * objectNormal);
+        {
+          vec2 wp = vGroundWorld.xz;
+          vec2 warp = vec2(gFbm(wp / 140.0 + 4.1), gFbm(wp / 140.0 + 9.7)) - 0.5;
+          vWarped = wp + warp * 90.0;
+          // x: region (districts), y: macro, z: mid.
+          vFields = vec3(gFbm(wp / 700.0 + 31.0), gFbm6(vWarped / 260.0), gFbm6(vWarped / 75.0 + 17.0));
+        }`,
       );
 
     shader.fragmentShader = shader.fragmentShader
@@ -46,60 +94,37 @@ function createGroundMaterial() {
         `#include <common>
         varying vec3 vGroundWorld;
         varying vec3 vGroundNormal;
+        varying vec2 vWarped;
+        varying vec3 vFields;
         uniform float uDetailTile;
         uniform float uStylized;
 
-        float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float gNoise(vec2 p) {
-          vec2 i = floor(p);
-          vec2 f = fract(p);
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(mix(gHash(i), gHash(i + vec2(1.0, 0.0)), u.x),
-                     mix(gHash(i + vec2(0.0, 1.0)), gHash(i + vec2(1.0, 1.0)), u.x), u.y);
-        }
-        // Each octave is rotated (~37°) and shifted, so the value noise never lines up with
-        // the axes – otherwise faint square blotches show on large meadows.
-        float gFbm(vec2 p) {
-          const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-          float v = 0.0;
-          float a = 0.5;
-          for (int k = 0; k < 4; k++) { v += a * gNoise(p); p = rot * p * 2.03 + vec2(17.3, 9.1); a *= 0.5; }
-          return v;
-        }
-        // Six octaves for the large meadow structure (smooth from 1 km down to a few metres).
-        float gFbm6(vec2 p) {
-          const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-          float v = 0.0;
-          float a = 0.5;
-          for (int k = 0; k < 6; k++) { v += a * gNoise(p); p = rot * p * 2.07 + vec2(11.7, 23.3); a *= 0.5; }
-          return v / 0.984;
-        }
+${GROUND_NOISE}
         // Texture lookup without visible repetition (Inigo Quilez, "texture repetition",
         // technique 3): a smooth noise field picks one of eight random offsets per area and
         // neighbouring variants are blended, so tile borders never line up into a grid.
-        vec4 noTile(sampler2D samp, vec2 uv) {
+        // The variant choice depends only on the coordinates: computed once per uv and shared by
+        // every texture read there (colour, grain, normal and roughness maps).
+        struct NoTile { vec2 uv; vec2 offa; vec2 offb; float f; vec2 dx; vec2 dy; };
+        NoTile noTileAt(vec2 uv) {
           // Rotated, two-octave field: variant borders follow no axis and stay soft.
           vec2 q = mat2(0.8, 0.6, -0.6, 0.8) * uv;
           float k = 0.65 * gNoise(q * 0.31) + 0.35 * gNoise(q * 0.83 + 5.2);
           float l = k * 8.0;
-          float f = fract(l);
           float ia = floor(l);
-          float ib = ia + 1.0;
-          vec2 offa = sin(vec2(3.0, 7.0) * ia);
-          vec2 offb = sin(vec2(3.0, 7.0) * ib);
-          vec2 dx = dFdx(uv);
-          vec2 dy = dFdy(uv);
-          vec4 cola = textureGrad(samp, uv + offa, dx, dy);
-          vec4 colb = textureGrad(samp, uv + offb, dx, dy);
-          return mix(cola, colb, smoothstep(0.1, 0.9, f - 0.1 * dot(cola - colb, vec4(1.0))));
+          NoTile t;
+          t.uv = uv;
+          t.f = fract(l);
+          t.offa = sin(vec2(3.0, 7.0) * ia);
+          t.offb = sin(vec2(3.0, 7.0) * (ia + 1.0));
+          t.dx = dFdx(uv);
+          t.dy = dFdy(uv);
+          return t;
         }
-        /** Same, but only the fine grain: the tile's own large-scale brightness is removed. */
-        float noTileGrain(sampler2D samp, vec2 uv) {
-          vec3 c = noTile(samp, uv).rgb;
-          float lum = dot(c, vec3(0.299, 0.587, 0.114));
-          // Mean brightness of the whole texture (smallest mip): grain = deviation from it.
-          float mean = dot(textureLod(samp, vec2(0.5), 10.0).rgb, vec3(0.299, 0.587, 0.114));
-          return lum - mean;
+        vec4 noTileRead(sampler2D samp, NoTile t) {
+          vec4 cola = textureGrad(samp, t.uv + t.offa, t.dx, t.dy);
+          vec4 colb = textureGrad(samp, t.uv + t.offb, t.dx, t.dy);
+          return mix(cola, colb, smoothstep(0.1, 0.9, t.f - 0.1 * dot(cola - colb, vec4(1.0))));
         }
         vec2 gUv(float scale, float angle) {
           float c = cos(angle);
@@ -115,60 +140,71 @@ function createGroundMaterial() {
         // Grass grain from two non-repeating lookups at different scale and rotation.
         vec2 uvA = gUv(uDetailTile, 0.0);
         vec2 uvB = gUv(uDetailTile * 2.7, 1.1);
-        vec3 detail = mix(noTile(map, uvA).rgb, noTile(map, uvB).rgb, 0.45);
-        float grain = 0.6 * noTileGrain(map, uvA) + 0.4 * noTileGrain(map, uvB);
+        NoTile tA = noTileAt(uvA);
+        NoTile tB = noTileAt(uvB);
+        vec3 colA = noTileRead(map, tA).rgb;
+        vec3 colB = noTileRead(map, tB).rgb;
+        vec3 detail = mix(colA, colB, 0.45);
+        // Fine grain only: the deviation from the texture's mean brightness (smallest mip).
+        float meanLum = dot(textureLod(map, vec2(0.5), 10.0).rgb, vec3(0.299, 0.587, 0.114));
+        float grain = 0.6 * (dot(colA, vec3(0.299, 0.587, 0.114)) - meanLum) + 0.4 * (dot(colB, vec3(0.299, 0.587, 0.114)) - meanLum);
         // Brightness from the grain only (no tile-sized blotches), centred on a mid value.
         float lum = clamp(0.23 + grain * 1.7, 0.0, 1.0);
 
         // Large-scale palette without a recognisable motif: every scale is domain-warped
         // (shapes flow instead of forming round dots) and the dry patches change size and
         // density from region to region, so no two parts of a meadow look alike.
-        vec2 wp = vGroundWorld.xz;
-        vec2 warp = vec2(gFbm(wp / 140.0 + 4.1), gFbm(wp / 140.0 + 9.7)) - 0.5;
-        vec2 ww = wp + warp * 90.0;
-        float region = gFbm(wp / 700.0 + 31.0);          // whole districts: wetter or drier
-        float macro = gFbm6(ww / 260.0);
-        float mid = gFbm6(ww / 75.0 + 17.0);
+        // Warp, region, macro and mid come from the vertex shader (vWarped, vFields).
+        vec2 ww = vWarped;
+        float region = vFields.x;                        // whole districts: wetter or drier
+        float macro = vFields.y;
+        float mid = vFields.z;
         float fine = gFbm(ww / 12.0 + 3.0);
         float patches = mid;                             // used by mountains below
-        vec3 lush  = vec3(0.055, 0.165, 0.022);
-        vec3 fresh = vec3(0.12, 0.27, 0.04);
-        vec3 olive = vec3(0.17, 0.25, 0.05);
-        vec3 dry   = vec3(0.33, 0.31, 0.14);
-        vec3 base = mix(lush, fresh, smoothstep(0.2, 0.8, macro * 0.7 + mid * 0.3));
-        // Slight hue drift over hundreds of metres (yellowish vs. bluish green).
-        base = mix(base, olive, smoothstep(0.45, 0.85, region) * 0.35);
-        // Dry ground: threshold follows the region, edges are ragged from the fine noise.
-        float dryness = mid * 0.7 + fine * 0.15 + macro * 0.15;
-        float threshold = mix(0.78, 0.52, smoothstep(0.3, 0.75, region));
-        base = mix(base, dry, smoothstep(threshold, threshold + 0.14, dryness) * 0.45);
-        // Clumps at metre scale.
-        base *= 0.86 + 0.28 * fine;
-
-        // Strong detail contrast so the grass reads as texture, plus a bit of photo colour.
+        // Strong detail contrast so the grass reads as texture.
         float detailContrast = pow(lum * 1.8, 1.4);
-        vec3 groundColor = mix(base * (0.35 + 1.25 * detailContrast), detail * 0.5, 0.1);
 
-        // Banks and beds: grass gives way to sand near the water line and to mud below it.
+        // Banks, beds and mountains: masks shared by both looks.
         float h = vGroundWorld.y;
-        vec3 sand = vec3(0.36, 0.31, 0.21) * (0.6 + 0.8 * detailContrast);
-        vec3 mud  = vec3(0.17, 0.14, 0.09) * (0.7 + 0.6 * detailContrast);
         float shore = smoothstep(-0.3, -0.75, h + (fine - 0.5) * 0.3);
-        groundColor = mix(groundColor, sand, shore);
-        groundColor = mix(groundColor, mud, smoothstep(${(WATER_LEVEL - 0.3).toFixed(2)}, ${(WATER_LEVEL - 1.6).toFixed(2)}, h));
-
-        // Mountains: alpine meadow higher up, bare rock on steep flanks and above the tree
-        // line, snow on the summits (less on steep faces where it would slide off).
+        float bed = smoothstep(${(WATER_LEVEL - 0.3).toFixed(2)}, ${(WATER_LEVEL - 1.6).toFixed(2)}, h);
         float slope = 1.0 - clamp(vGroundNormal.y, 0.0, 1.0);
-        float rocky = macro * 0.6 + fine * 0.4;
-        vec3 alpine = mix(base, vec3(0.30, 0.31, 0.16), 0.5) * (0.4 + 1.2 * detailContrast);
-        vec3 rock = mix(vec3(0.33, 0.31, 0.29), vec3(0.47, 0.45, 0.42), rocky) * (0.45 + 1.1 * detailContrast);
-        vec3 snow = vec3(0.90, 0.92, 0.95) * (0.85 + 0.25 * detailContrast);
-        groundColor = mix(groundColor, alpine, smoothstep(18.0, 40.0, h + (fine - 0.5) * 8.0));
         float rockMask = max(smoothstep(0.22, 0.42, slope), smoothstep(48.0, 62.0, h + (patches - 0.5) * 14.0));
-        groundColor = mix(groundColor, rock, rockMask);
         float snowMask = smoothstep(60.0, 72.0, h + (fine - 0.5) * 10.0) * (1.0 - smoothstep(0.45, 0.65, slope));
-        groundColor = mix(groundColor, snow, snowMask);
+
+        // Only the active look is computed (uniform branch); both only while blending.
+        vec3 groundColor = vec3(0.0);
+        if (uStylized < 1.0) {
+          vec3 lush  = vec3(0.055, 0.165, 0.022);
+          vec3 fresh = vec3(0.12, 0.27, 0.04);
+          vec3 olive = vec3(0.17, 0.25, 0.05);
+          vec3 dry   = vec3(0.33, 0.31, 0.14);
+          vec3 base = mix(lush, fresh, smoothstep(0.2, 0.8, macro * 0.7 + mid * 0.3));
+          // Slight hue drift over hundreds of metres (yellowish vs. bluish green).
+          base = mix(base, olive, smoothstep(0.45, 0.85, region) * 0.35);
+          // Dry ground: threshold follows the region, edges are ragged from the fine noise.
+          float dryness = mid * 0.7 + fine * 0.15 + macro * 0.15;
+          float threshold = mix(0.78, 0.52, smoothstep(0.3, 0.75, region));
+          base = mix(base, dry, smoothstep(threshold, threshold + 0.14, dryness) * 0.45);
+          // Clumps at metre scale.
+          base *= 0.86 + 0.28 * fine;
+          // A bit of photo colour.
+          groundColor = mix(base * (0.35 + 1.25 * detailContrast), detail * 0.5, 0.1);
+          // Grass gives way to sand near the water line and to mud below it.
+          vec3 sand = vec3(0.36, 0.31, 0.21) * (0.6 + 0.8 * detailContrast);
+          vec3 mud  = vec3(0.17, 0.14, 0.09) * (0.7 + 0.6 * detailContrast);
+          groundColor = mix(groundColor, sand, shore);
+          groundColor = mix(groundColor, mud, bed);
+          // Mountains: alpine meadow higher up, bare rock on steep flanks and above the tree
+          // line, snow on the summits (less on steep faces where it would slide off).
+          float rocky = macro * 0.6 + fine * 0.4;
+          vec3 alpine = mix(base, vec3(0.30, 0.31, 0.16), 0.5) * (0.4 + 1.2 * detailContrast);
+          vec3 rock = mix(vec3(0.33, 0.31, 0.29), vec3(0.47, 0.45, 0.42), rocky) * (0.45 + 1.1 * detailContrast);
+          vec3 snow = vec3(0.90, 0.92, 0.95) * (0.85 + 0.25 * detailContrast);
+          groundColor = mix(groundColor, alpine, smoothstep(18.0, 40.0, h + (fine - 0.5) * 8.0));
+          groundColor = mix(groundColor, rock, rockMask);
+          groundColor = mix(groundColor, snow, snowMask);
+        }
         // City Pack style: soft flat lawn like the Kenney kits, broad gentle variation only,
         // light sand at the water, flat rock and snow in the mountains.
         if (uStylized > 0.0) {
@@ -181,11 +217,11 @@ function createGroundMaterial() {
           kLawn *= (0.85 + 0.3 * clamp(detailContrast, 0.0, 1.0)) * (0.95 + 0.1 * fine);
           vec3 k = kLawn;
           k = mix(k, vec3(0.62, 0.53, 0.32), shore);
-          k = mix(k, vec3(0.30, 0.23, 0.13), smoothstep(${(WATER_LEVEL - 0.3).toFixed(2)}, ${(WATER_LEVEL - 1.6).toFixed(2)}, h));
+          k = mix(k, vec3(0.30, 0.23, 0.13), bed);
           k = mix(k, vec3(0.24, 0.38, 0.12), smoothstep(18.0, 40.0, h));
           k = mix(k, vec3(0.40, 0.40, 0.42), rockMask);
           k = mix(k, vec3(0.92, 0.94, 0.97), snowMask);
-          groundColor = mix(groundColor, k, uStylized);
+          groundColor = uStylized >= 1.0 ? k : mix(groundColor, k, uStylized);
         }
         diffuseColor.rgb *= groundColor;
         `,
@@ -194,7 +230,7 @@ function createGroundMaterial() {
         "#include <normal_fragment_maps>",
         `
         #ifdef USE_NORMALMAP
-          vec3 mapN = noTile(normalMap, gUv(uDetailTile, 0.0)).xyz * 2.0 - 1.0;
+          vec3 mapN = noTileRead(normalMap, tA).xyz * 2.0 - 1.0;
           mapN.xy *= normalScale * (1.0 - 0.4 * uStylized);
           normal = normalize(tbn * mapN);
         #endif
@@ -205,7 +241,7 @@ function createGroundMaterial() {
         `
         float roughnessFactor = roughness;
         #ifdef USE_ROUGHNESSMAP
-          roughnessFactor *= mix(noTile(roughnessMap, gUv(uDetailTile, 0.0)).g, 0.9, uStylized);
+          roughnessFactor *= mix(noTileRead(roughnessMap, tA).g, 0.9, uStylized);
         #endif
         `,
       );

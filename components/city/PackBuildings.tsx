@@ -35,7 +35,8 @@ interface PackSpec {
   variant: number;
   /** Model at the front, or per level a model that fills the whole plot (overrides the halls). */
   main: string;
-  whole?: Partial<Record<number, { url: string; kit: Kit; variant: number }>>;
+  /** `height`: stretch the model over the whole plot (x and z separately) to this height – a big box store. */
+  whole?: Partial<Record<number, { url: string; kit: Kit; variant: number; height?: number }>>;
   /** Hall added at each level in the strip the plot grew by. */
   extra?: Partial<Record<number, string>>;
   /** Highest a main model may get (m): wide plots would otherwise make huge halls. */
@@ -179,7 +180,9 @@ export const PACK_SPECS: Partial<Record<BuildingKind, PackSpec>> = {
     whole: {
       2: { url: ind("building-r"), kit: "industrial", variant: 3 },
       3: { url: ind("building-t"), kit: "industrial", variant: 3 },
-      4: { url: ind("building-o"), kit: "industrial", variant: 1 },
+      // Möbelzentrum: the wide, low hall stretched over the whole plot (the narrow tower it had
+      // came out smaller than the level-3 store).
+      4: { url: ind("building-q"), kit: "industrial", variant: 1, height: 16 },
     },
     maxH: 12,
   },
@@ -373,10 +376,10 @@ function sharedAssets() {
 /** Turn that makes a kit model face the street (local −z): suburban houses face +z, commercial and industrial models −z. */
 const FACING: Record<Kit, number> = { suburban: Math.PI, commercial: 0, industrial: 0 };
 
-/** One kit model (all its parts) at local (x, z), uniformly scaled, facing the street. */
-export function KitModel({ model, kit, variant, x, z, s, sy, y = 0 }: { model: KitParts; kit: Kit; variant: number; x: number; z: number; s: number; sy?: number; y?: number }) {
+/** One kit model (all its parts) at local (x, z), scaled (uniformly unless sx/sy/sz are given), facing the street. */
+export function KitModel({ model, kit, variant, x, z, s, sx, sy, sz, y = 0 }: { model: KitParts; kit: Kit; variant: number; x: number; z: number; s: number; sx?: number; sy?: number; sz?: number; y?: number }) {
   return (
-    <group position={[x, y, z]} rotation={[0, FACING[kit], 0]} scale={[s, sy ?? s, s]}>
+    <group position={[x, y, z]} rotation={[0, FACING[kit], 0]} scale={[sx ?? s, sy ?? s, sz ?? s]}>
       {model.parts.map((p, i) => (
         <mesh key={i} geometry={p.geometry} material={kitMaterial(kit, variant, p.glossy)} castShadow receiveShadow />
       ))}
@@ -428,12 +431,16 @@ export function PackBuilding({ b }: { b: Building }) {
   const industrial = spec.kit === "industrial" || INDUSTRY.includes(b.kind);
   const hasGoods = GOODS_KINDS.includes(b.kind) && w >= 24;
   const items = useMemo(() => {
-    const out: { model: KitParts; kit: Kit; variant: number; x: number; z: number; s: number; sy?: number }[] = [];
+    const out: { model: KitParts; kit: Kit; variant: number; x: number; z: number; s: number; sx?: number; sy?: number; sz?: number }[] = [];
     const whole = spec.whole?.[b.level];
     if (whole) {
       const m = models.get(whole.url);
       const dd = d * (spec.mainDepth ?? 1);
-      if (m) out.push({ model: m, kit: whole.kit, variant: whole.variant, x: 0, z: front + dd / 2 + (spec.mainDepth ? 0.5 : 0), s: fit(m, w, dd - (spec.mainDepth ? 1 : 4), (spec.maxH ?? 14) * 1.2) });
+      if (m && whole.height) {
+        const sx = (w - 2) / m.size.x;
+        const sz = (dd - 4) / m.size.z;
+        out.push({ model: m, kit: whole.kit, variant: whole.variant, x: 0, z: front + dd / 2, s: Math.min(sx, sz), sx, sy: whole.height / m.size.y, sz });
+      } else if (m) out.push({ model: m, kit: whole.kit, variant: whole.variant, x: 0, z: front + dd / 2 + (spec.mainDepth ? 0.5 : 0), s: fit(m, w, dd - (spec.mainDepth ? 1 : 4), (spec.maxH ?? 14) * 1.2) });
       return out;
     }
     // Front hall in the level-1 plot, a hall per upgrade in the strip the plot grew by.

@@ -4,11 +4,13 @@ import { computeProfiles, crossesAtGrade, crossesLevel, pairKey, type Separation
 import { planCloverleaf, planCloverleafPrefab } from "./cloverleaf";
 import {
   BUILDINGS,
+  MAYOR_PRIVATE,
   sizeOf,
   BUSINESS_TAX_DEFAULT,
   BUSINESS_TAX_MAX,
   BUSINESS_TAX_MIN,
   levelName,
+  MISSION_FEE,
   simulate, START_MONEY, TAX_DEFAULT, TAX_MAX, TAX_MIN, type Building, type BuildingKind, type EconomyStats,
   storedTotal,
   insideFootprint,
@@ -34,6 +36,13 @@ import { moodFactors, moodOf, STAT_INTERVAL, STAT_LIMIT, type StatSample } from 
 import { bulldozeTarget, splitOut } from "./bulldoze";
 import { checkPoint, type JoinState } from "./joins";
 import { HARBOUR_BERTHS, newShip, SALE_WINDOW, SHIP_RESALE, shipType, shipUpkeep, stepShips, type Ship, type ShipSale } from "./shipping";
+import { dispatch, dispatchAmbulance, dispatchPolice, incidentDone, stepIncidents, type Incident } from "./incidents";
+import { acceptOffer, applyMayor, embezzleSuspicion, jailed, newMayor, OFFER_LABEL, repayTown, SALARY_MAX, setFront, setRacket, spend, stepMayor, type MayorState } from "./mayor";
+import { payoutOf, type RouletteBet, type RouletteSpin } from "./roulette";
+import { collectNews, makeEdition, newsSnapshot, PAPER_NAME, type Edition, type NewsEvent, type NewsSnapshot } from "./news";
+import { timed } from "./perf";
+import { buildingsDropped, buildingsSynced, requestGrow, requestSim, simState, type SimWorld } from "./sim-client";
+import { depotSlots, newTrain, railEconomy, TRAIN_RESALE, trainType, type Train } from "./railway";
 
 const HISTORY_LIMIT = 50;
 
@@ -96,6 +105,12 @@ export const NETWORK_KEY: Record<NetworkId, PathListKey> = {
 };
 
 interface CityState extends Networks {
+  /** Cinematic rain weather effect. */
+  showRain: boolean;
+  toggleRain: () => void;
+  /** Snow weather effect. */
+  showSnow: boolean;
+  toggleSnow: () => void;
   /** Earlier snapshots, for undo. */
   history: Networks[];
   /** Points placed for the path currently being drawn. */
@@ -163,7 +178,14 @@ interface CityState extends Networks {
   upgrade: (id: string) => void;
   demolish: (id: string) => void;
   /** One second of simulation: money changes by the per-minute balance / 60. */
-  tick: () => void;
+  tick: (precomputed?: EconomyStats) => void;
+  /**
+   * One game tick with the economy and the growth computed in the simulation worker
+   * (falls back to `tick` + `growStep` on the main thread without one).
+   */
+  tickAsync: () => Promise<void>;
+  /** Town growth after a tick (own task): new and bigger houses, as many as the speed allows. */
+  growStep: () => void;
   setSpeed: (speed: number) => void;
   setTaxRate: (rate: number) => void;
   /** Increases on every new or loaded world; the 3D scene is remounted with it. */
@@ -215,6 +237,49 @@ interface CityState extends Networks {
   /** Building permits for homes, set in the town hall (only while one stands). */
   permits: Permits;
   setPermits: (permits: Permits) => void;
+  /** Open accidents and house fires (police and fire brigade respond). */
+  incidents: Incident[];
+  /** Game minute the last incident started (incidents keep a pause between them). */
+  incidentLastAt: number;
+  /** The mayor's private account, salary, bribes and suspicion (mayor.ts). */
+  mayor: MayorState;
+  setSalary: (salary: number) => void;
+  acceptBribe: (id: string) => void;
+  declineBribe: (id: string) => void;
+  /** Moves money from the town's till onto the mayor's account. */
+  embezzle: (amount: number) => void;
+  /** The mayor gives money back to the town: standing up, a running scandal shorter. */
+  repayCity: (amount: number) => void;
+  /** Uses a pizzeria / recycling yard to launder the mayor's dirty money (or stops it). */
+  setLaundering: (building: string, on: boolean) => void;
+  /** Protection money from a firm: share of its profit (0 ends it). */
+  setProtection: (building: string, share: number) => void;
+  /** One spin of the casino's roulette with the mayor's money; null if it cannot be played. */
+  playRoulette: (bet: RouletteBet, stake: number) => RouletteSpin | null;
+  /** Last spins (not saved). */
+  rouletteHistory: RouletteSpin[];
+  /** What happened lately (for the newspaper), the printed editions (newest first), the last edition read. */
+  newsLog: NewsEvent[];
+  newspapers: Edition[];
+  newsRead: number;
+  /** Marks the newest edition as read. */
+  readNewspaper: () => void;
+  /** The player raises the alarm for an incident: police or fire brigade set off. */
+  raiseAlarm: (id: string) => void;
+  /** Flies the camera to an incident. */
+  flyToIncident: (id: string) => void;
+  /** The vehicle has arrived at the incident (scene → store). */
+  incidentOnSite: (id: string) => void;
+  /** The vehicle has finished at the incident: it is over (or only waits for the ambulance); the fee is paid. */
+  resolveIncident: (id: string) => void;
+  /** The ambulance has taken the injured to hospital; its fee is paid. */
+  ambulanceDone: (id: string) => void;
+  /** The patrol car at a fire has opened the street again and left. */
+  policeDone: (id: string) => void;
+  /** Trains; each belongs to a signal box (traindepot). */
+  trains: Train[];
+  buyTrain: (depotId: string, typeId: string) => void;
+  sellTrain: (id: string) => void;
 }
 
 export type HouseStyle = "classic" | "pack";
@@ -228,7 +293,7 @@ function readHouseStyle(): HouseStyle {
   }
 }
 
-export type CityPanel = "bank" | "townhall" | "taxoffice" | "exchange";
+export type CityPanel = "bank" | "townhall" | "taxoffice" | "exchange" | "mayor" | "casino" | "newspaper";
 
 let idCounter = 0;
 const newId = (network: NetworkId) => `${network}-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
@@ -245,6 +310,22 @@ const snapshot = (s: Networks): Networks => ({
 
 const firstWorld = generateVillage(1);
 
+/** What the mayor's own buildings (villa, boathouse) cost him (construction and upgrades), for undo refunds. */
+function villaValue(buildings: Building[]) {
+  let sum = 0;
+  for (const v of buildings) {
+    if (!MAYOR_PRIVATE.includes(v.kind)) continue;
+    const up = BUILDINGS[v.kind].upgrade ?? [];
+    sum += BUILDINGS[v.kind].cost;
+    for (let l = 2; l <= v.level; l++) sum += up[l] ?? 0;
+  }
+  return sum;
+}
+const mayorRnd = mulberry32((Date.now() >> 5) & 0xffff);
+/** The state the newspaper compared against last tick (null after loading: the first tick only takes a picture). */
+let lastNews: NewsSnapshot | null = null;
+const rouletteRnd = mulberry32((Date.now() >> 7) & 0xffff);
+
 /** Why each harbour cannot send ships (null = it can); cached while buildings and water stay the same. */
 let harbourCache: { buildings: Building[]; grid: DepthGrid; out: Record<string, string | null> } | null = null;
 function harbourStatus(buildings: Building[], grid: DepthGrid) {
@@ -255,12 +336,27 @@ function harbourStatus(buildings: Building[], grid: DepthGrid) {
   return out;
 }
 const growthRnd = mulberry32(Date.now() & 0xffff);
+const incidentRnd = mulberry32((Date.now() >> 3) & 0xffff);
 /**
  * A growth step that found no plot and no house to upgrade is retried only after
  * GROWTH_RETRY ticks or once roads/buildings change: the search costs ~7 ms and ran every
  * tick while the town was full, a hitch once per second.
  */
 const GROWTH_RETRY = 15;
+/** Time slice for growth after a tick (ms): more houses only while there is time left. */
+const GROW_SLICE_MS = 8;
+/** Real time of the last tick, for the smooth clock between ticks. */
+let lastTickAt = 0;
+
+/**
+ * Game time with the fraction since the last tick (ticks come once a second and add `speed`
+ * minutes at once): sun, sky and the HUD clock move smoothly instead of jumping.
+ */
+export function clockMinutes() {
+  const s = useCity.getState();
+  if (s.speed === 0 || lastTickAt === 0) return s.gameMinutes;
+  return s.gameMinutes + Math.min(1, (performance.now() - lastTickAt) / 1000) * s.speed;
+}
 let growthBlocked: { buildings: Building[]; roads: Path[]; ticks: number } | null = null;
 
 /** True if a new path of `kind` drawn in `mode` joins `other` at grade where they meet. */
@@ -391,8 +487,16 @@ export const useCity = create<CityState>((set, get) => ({
   permits: "all",
   storage: {},
   ships: [],
+  trains: [],
   shipSales: [],
   gold: 0,
+  incidents: [],
+  incidentLastAt: -Infinity,
+  mayor: newMayor(),
+  rouletteHistory: [],
+  newsLog: [],
+  newspapers: [],
+  newsRead: 0,
   separations: {},
   crossingMode: "auto",
   history: [],
@@ -403,10 +507,14 @@ export const useCity = create<CityState>((set, get) => ({
   notice: null,
   jobs: [],
   jobOffsets: {},
+  showRain: false,
+  showSnow: false,
 
   setTool: (tool) => set({ tool, draft: [], cursor: null, notice: null, placing: null }),
 
   newWorld: (seed) => {
+    // The newspaper starts comparing afresh (otherwise every building would be "new").
+    lastNews = null;
     setWorldSeed(seed);
     const village = generateVillage(seed);
     set({
@@ -423,8 +531,15 @@ export const useCity = create<CityState>((set, get) => ({
       permits: "all",
       storage: {},
       ships: [],
+      trains: [],
       shipSales: [],
       gold: 0,
+      incidents: [],
+      incidentLastAt: -Infinity,
+      mayor: newMayor(),
+      newsLog: [],
+      newspapers: [],
+      newsRead: 0,
       separations: {},
       history: [],
       jobs: [],
@@ -467,13 +582,21 @@ export const useCity = create<CityState>((set, get) => ({
       permits: s.permits,
       storage: s.storage,
       ships: s.ships,
+      trains: s.trains,
       shipSales: s.shipSales,
       gold: s.gold,
+      incidents: s.incidents,
+      mayor: s.mayor,
+      newsLog: s.newsLog,
+      newspapers: s.newspapers,
+      newsRead: s.newsRead,
       summary: { residents: s.economy?.residents ?? 0 },
     };
   },
 
   loadGame: (save) => {
+    // The newspaper starts comparing afresh (otherwise every building would be "new").
+    lastNews = null;
     setWorldSeed(save.seed);
     // Older saves may have junctions on rounded corners: repaired on load.
     const clean = cleanJunctions(save.roads, save.separations, []);
@@ -502,8 +625,14 @@ export const useCity = create<CityState>((set, get) => ({
       permits: save.permits ?? "all",
       storage: save.storage ?? {},
       ships: save.ships ?? [],
+      trains: save.trains ?? [],
       shipSales: save.shipSales ?? [],
       gold: save.gold ?? 0,
+      incidents: save.incidents ?? [],
+      mayor: { ...newMayor(), ...(save.mayor ?? {}) },
+      newsLog: save.newsLog ?? [],
+      newspapers: save.newspapers ?? [],
+      newsRead: save.newsRead ?? 0,
       panel: null,
       history: [],
       // Everything in a save is finished: no construction sites.
@@ -533,6 +662,16 @@ export const useCity = create<CityState>((set, get) => ({
     const state = get();
     if (!state.placing) return;
     const finishedCanals = state.canals.filter((c) => !state.jobs.includes(c.id));
+    // The mayor's villa and boathouse are paid from his private account, not by the town.
+    const privately = MAYOR_PRIVATE.includes(state.placing);
+    if (privately && jailed(state.mayor, state.gameMinutes)) {
+      set({ notice: `Der Bürgermeister sitzt im Gefängnis – kein ${BUILDINGS[state.placing].label}` });
+      return;
+    }
+    if (privately && state.mayor.account < BUILDINGS[state.placing].cost) {
+      set({ notice: `Das Privatkonto reicht nicht (${Math.round(state.mayor.account).toLocaleString("de-DE")} € von ${BUILDINGS[state.placing].cost.toLocaleString("de-DE")} €) – Knopf „Bürgermeister“` });
+      return;
+    }
     const plan = planBuilding(
       state.placing,
       p,
@@ -540,7 +679,7 @@ export const useCity = create<CityState>((set, get) => ({
       [...state.roads, ...state.rails, ...state.canals],
       state.buildings,
       depthGrid(finishedCanals),
-      state.money,
+      privately ? state.mayor.account : state.money,
       newId("road").replace("road", "building"),
       state.cables,
     );
@@ -559,9 +698,10 @@ export const useCity = create<CityState>((set, get) => ({
     set({
       buildings,
       cables: wired?.cables ?? state.cables,
-      money: state.money - cost - wiredCost,
+      money: state.money - (privately ? 0 : cost) - wiredCost,
+      mayor: privately ? spend(state.mayor, cost, false) : state.mayor,
       selected: plan.building.id,
-      notice: `${BUILDINGS[plan.building.kind].label} gebaut (−${cost.toLocaleString("de-DE")} €)${
+      notice: `${BUILDINGS[plan.building.kind].label} gebaut (−${cost.toLocaleString("de-DE")} €${privately ? " vom Privatkonto" : ""})${
         gone.size > 0 ? `, ${gone.size} ${gone.size === 1 ? "Wohnhaus" : "Wohnhäuser"} abgerissen` : ""
       }${
         wired?.added.length ? `, Leitung automatisch gelegt (−${wiredCost.toLocaleString("de-DE")} €)` : ""
@@ -607,8 +747,9 @@ export const useCity = create<CityState>((set, get) => ({
     const costs = b ? BUILDINGS[b.kind].upgrade : undefined;
     if (!b || !costs || b.level >= costs.length - 1) return;
     const cost = costs[b.level + 1];
-    if (state.money < cost) {
-      set({ notice: `Nicht genug Geld für den Ausbau (${cost.toLocaleString("de-DE")} €)` });
+    const privately = MAYOR_PRIVATE.includes(b.kind);
+    if ((privately ? state.mayor.account : state.money) < cost) {
+      set({ notice: privately ? `Das Privatkonto reicht nicht für den Ausbau (${cost.toLocaleString("de-DE")} €)` : `Nicht genug Geld für den Ausbau (${cost.toLocaleString("de-DE")} €)` });
       return;
     }
     // Buildings with a growing plot move back from the road and clear houses in the way.
@@ -621,7 +762,8 @@ export const useCity = create<CityState>((set, get) => ({
     const gone = new Set(plan.demolish);
     set({
       buildings: state.buildings.filter((x) => !gone.has(x.id)).map((x) => (x.id === id ? plan.building : x)),
-      money: state.money - cost,
+      money: state.money - (privately ? 0 : cost),
+      mayor: privately ? spend(state.mayor, cost, false) : state.mayor,
       notice: `Ausgebaut: ${levelName(plan.building)}${gone.size > 0 ? ` – ${gone.size} ${gone.size === 1 ? "Haus" : "Häuser"} abgerissen` : ""}`,
       history: [...state.history, snapshot(state)].slice(-HISTORY_LIMIT),
     });
@@ -635,18 +777,98 @@ export const useCity = create<CityState>((set, get) => ({
       // Goods of a demolished warehouse and the fleet of a demolished harbour are gone.
       storage: id in state.storage ? Object.fromEntries(Object.entries(state.storage).filter(([k]) => k !== id)) : state.storage,
       ships: state.ships.some((sh) => sh.harbour === id) ? state.ships.filter((sh) => sh.harbour !== id) : state.ships,
+      // Trains of a demolished signal box are scrapped.
+      trains: state.trains.some((t) => t.depot === id) ? state.trains.filter((t) => t.depot !== id) : state.trains,
+      // A fire in a demolished house is out; a demolished station's vehicles are recalled.
+      incidents: state.incidents
+        .filter((i) => i.building !== id)
+        .map((i) => (i.station === id ? { ...i, station: null, onSite: false } : i)),
       selected: null,
       history: [...state.history, snapshot(state)].slice(-HISTORY_LIMIT),
     });
   },
 
-  tick: () => {
+  tickAsync: async () => {
     const state = get();
+    const mode = simState();
+    // Worker still busy with the last tick (slow machine): skip, the clock just runs slower.
+    if (mode === "busy") return;
+    if (mode === "sync") {
+      get().tick();
+      requestAnimationFrame(() => window.setTimeout(() => get().growStep(), 0));
+      return;
+    }
+    const worldOf = (s: CityState): SimWorld => ({ seed: s.seed, roads: s.roads, rails: s.rails, canals: s.canals, cables: s.cables, jobs: s.jobs, buildings: s.buildings });
+    const harbourWater = harbourStatus(state.buildings, depthGrid(state.canals.filter((c) => !state.jobs.includes(c.id))));
+    const economy = await requestSim(worldOf(state), {
+      taxRate: state.taxRate,
+      businessTaxRate: state.businessTaxRate,
+      storage: state.storage,
+      shipUpkeep: shipUpkeep(state.ships),
+      harbourWater,
+    });
+    // A new world was started or loaded meanwhile: this result belongs to the old one.
+    if (get().worldVersion !== state.worldVersion) return;
+    if (!economy) {
+      get().tick();
+      return;
+    }
+    get().tick(economy);
+    // Growth: as many new houses as the speed allows, also in the worker.
+    const s = get();
+    const permits: Permits = s.buildings.some((b) => b.kind === "townhall") ? s.permits : "all";
+    if (s.speed === 0 || permits === "none" || s.growthPoints < GROWTH_STEP || simState() !== "ready") return;
+    const asked = s.growthPoints;
+    const grown = await requestGrow(worldOf(s), { growthPoints: asked, permits, minutes: s.gameMinutes, speed: s.speed });
+    const now = get();
+    if (!grown || now.worldVersion !== s.worldVersion) return;
+    if (now.buildings !== s.buildings) {
+      // The player built or demolished something meanwhile: drop this step (the points stay).
+      if (grown.added.length + grown.changed.length > 0) buildingsDropped();
+      return;
+    }
+    let buildings = s.buildings;
+    if (grown.added.length + grown.changed.length > 0) {
+      const changed = new Map(grown.changed.map((b) => [b.id, b]));
+      buildings = [...(changed.size > 0 ? s.buildings.map((b) => changed.get(b.id) ?? b) : s.buildings), ...grown.added];
+      buildingsSynced(buildings);
+    }
+    set({
+      buildings,
+      growthPoints: now.growthPoints + (grown.growthPoints - asked),
+      notice: grown.event && !now.tool && !now.placing ? grown.event : now.notice,
+    });
+  },
+
+  tick: (precomputed) => {
+    const state = get();
+    lastTickAt = performance.now();
     // All roads count for supply: the construction animation is only visual (a new street
     // merged into an existing one must not cut the town off while it is being built).
     const done = state.roads;
-    const harbourWater = harbourStatus(state.buildings, depthGrid(state.canals.filter((c) => !state.jobs.includes(c.id))));
-    const economy = simulate(state.buildings, done, state.taxRate, state.businessTaxRate, state.cables, state.canals, state.storage, shipUpkeep(state.ships), harbourWater);
+    const harbourWater = timed("tick: Hafenwasser", () => harbourStatus(state.buildings, depthGrid(state.canals.filter((c) => !state.jobs.includes(c.id)))));
+    const base = precomputed ?? timed("tick: simulate", () => simulate(state.buildings, done, state.taxRate, state.businessTaxRate, state.cables, state.canals, state.storage, shipUpkeep(state.ships), harbourWater));
+    // Railway: fares and freight in, train upkeep out; a served station network attracts a few more people.
+    const finishedRails = state.rails.filter((r) => !state.jobs.includes(r.id));
+    const rail = timed("tick: Bahn", () => railEconomy(state.buildings, finishedRails, state.trains, base.residents));
+    const withRail: EconomyStats =
+      rail.income > 0 || rail.upkeep > 0 || Object.keys(rail.stations).length > 0 || Object.keys(rail.depots).length > 0
+        ? {
+            ...base,
+            rail,
+            balance: base.balance + rail.income - rail.upkeep,
+            income: base.income + rail.income,
+            upkeep: base.upkeep + rail.upkeep,
+            immigration: base.immigration * (0.97 + 0.06 * rail.transit),
+            budget: {
+              ...base.budget,
+              rail: rail.income,
+              services: rail.upkeep > 0 ? { ...base.budget.services, traindepot: (base.budget.services.traindepot ?? 0) + rail.upkeep } : base.budget.services,
+            },
+          }
+        : base;
+    // The mayor: salary and favours leave the balance, a scandal keeps people away.
+    const economy = applyMayor(withRail, state.mayor, state.gameMinutes);
     // Paused: keep the readings fresh, but no time passes and no money flows.
     if (state.speed === 0) {
       set({ economy });
@@ -659,34 +881,14 @@ export const useCity = create<CityState>((set, get) => ({
     // Permits only bind while a town hall stands (without one, nobody can stop the builders).
     const permits: Permits = state.buildings.some((b) => b.kind === "townhall") ? state.permits : "all";
     if (permits === "none") growthPoints = Math.min(growthPoints, GROWTH_STEP);
-    else if (
-      growthPoints >= GROWTH_STEP &&
-      !(growthBlocked && growthBlocked.buildings === buildings && growthBlocked.roads === done && --growthBlocked.ticks > 0)
-    ) {
-      const finishedCanals = state.canals.filter((c) => !state.jobs.includes(c.id));
-      const result = growOnce(
-        buildings,
-        done,
-        [...done, ...state.rails, ...state.canals],
-        depthGrid(finishedCanals),
-        economy,
-        growthRnd,
-        () => newId("road").replace("road", "building"),
-        permits,
-        state.gameMinutes,
-      );
-      if (result.buildings !== buildings) {
-        growthPoints -= GROWTH_STEP;
-        growthBlocked = null;
-      } else {
-        growthPoints = GROWTH_STEP; // no room: wait for new streets
-        // Plots still unchecked (cold cache): try again soon, the next search may find some.
-        growthBlocked = { buildings, roads: done, ticks: plotsUnchecked() > 0 ? 2 : GROWTH_RETRY };
-      }
-      buildings = result.buildings;
-      if (!state.tool && !state.placing && result.event) notice = result.event;
-    }
-    buildings = decay(buildings, economy, growthRnd, state.speed) ?? buildings;
+    // New houses are built in `growStep`, in its own task after this tick (see CityBuilder),
+    // as many as the speed allows: a blocked search waits a few ticks.
+    if (growthBlocked) growthBlocked.ticks--;
+    buildings = timed("tick: Verfall", () => decay(buildings, economy, growthRnd, state.speed)) ?? buildings;
+    // Accidents and fires: new ones start, unattended ones end badly.
+    const incidentStep = timed("tick: Einsätze", () => stepIncidents(state.incidents, buildings, done.filter((r) => !state.jobs.includes(r.id)), economy, state.gameMinutes, state.speed, incidentRnd, () => newId("road").replace("road", "incident"), state.incidentLastAt));
+    buildings = incidentStep.buildings;
+    if (incidentStep.notice && !state.tool && !state.placing) notice = incidentStep.notice;
     const { loans, paid } = payLoans(state.loans, state.speed);
     // Warehouses fill with the surplus (up to their capacity), ships take it away.
     let storage = state.storage;
@@ -718,9 +920,13 @@ export const useCity = create<CityState>((set, get) => ({
         storage[id] = cur;
       }
     }
-    const shipping = stepShips(state.ships, buildings, storage, economy.networkOf, state.speed, harbourWater, economy.importOrders);
+    const shipping = timed("tick: Schiffe", () => stepShips(state.ships, buildings, storage, economy.networkOf, state.speed, harbourWater, economy.importOrders));
     storage = shipping.storage;
-    const money = state.money + (economy.balance / 60) * state.speed - paid + shipping.revenue;
+    const mayorStep = stepMayor(state.mayor, economy, buildings, state.gameMinutes, state.speed, mayorRnd, () => newId("road").replace("road", "offer"));
+    if (mayorStep.notice) notice = mayorStep.notice;
+    // Arrested: the villa goes to the state.
+    if (mayorStep.confiscateVilla) buildings = buildings.filter((b) => !MAYOR_PRIVATE.includes(b.kind));
+    const money = state.money + (economy.balance / 60) * state.speed - paid + shipping.revenue + mayorStep.seized;
     const gameMinutes = state.gameMinutes + state.speed;
     if (loans.length < state.loans.length && !state.tool && !state.placing) notice = "Ein Kredit ist vollständig zurückgezahlt";
     // A trend sample every STAT_INTERVAL game minutes.
@@ -728,7 +934,7 @@ export const useCity = create<CityState>((set, get) => ({
     if (Math.floor(gameMinutes / STAT_INTERVAL) !== Math.floor(state.gameMinutes / STAT_INTERVAL)) {
       const mood = moodOf(moodFactors(economy));
       const b = economy.budget;
-      const income = b.incomeTax + b.businessTax + b.propertyTax + b.waterFees + b.powerFees + (b.airport ?? 0);
+      const income = b.incomeTax + b.businessTax + b.propertyTax + b.waterFees + b.powerFees + (b.airport ?? 0) + (b.emergency ?? 0) + (b.rail ?? 0) + (b.justice ?? 0);
       const sample: StatSample = { t: gameMinutes, money, residents: economy.residents, balance: economy.balance - loanPayments(loans), mood, income };
       stats = [...stats, sample].slice(-STAT_LIMIT);
     }
@@ -739,8 +945,205 @@ export const useCity = create<CityState>((set, get) => ({
         : state.shipSales;
     // The smelters' leftover bars go into the vault (paid in the balance like warehouse purchases).
     const gold = state.gold + ((economy.goldIn ?? 0) / 60) * state.speed;
-    set({ economy, buildings, growthPoints, notice, money, gameMinutes, loans, stats, storage, ships: shipping.ships, shipSales, gold });
+    // Newspaper: note what happened since the last tick; a connected newspaper prints an edition every game day.
+    const snap = newsSnapshot(buildings, incidentStep.incidents, mayorStep.mayor, economy.residents, gameMinutes);
+    const happened = lastNews ? collectNews(lastNews, snap, gameMinutes) : [];
+    lastNews = snap;
+    let newsLog = state.newsLog;
+    if (happened.length > 0 || newsLog.some((e) => e.t < gameMinutes - 2 * 1440)) newsLog = [...newsLog.filter((e) => e.t >= gameMinutes - 2 * 1440), ...happened];
+    let newspapers = state.newspapers;
+    const press = buildings.find((b) => b.kind === "newspaper");
+    const day = Math.floor(gameMinutes / 1440);
+    const printing = press && economy.status[press.id]?.connected && (Math.floor(state.gameMinutes / 1440) < day || newspapers.length === 0);
+    if (printing) {
+      // The first edition comes out right away (with the last day's news), then one each morning.
+      const since = newspapers[0]?.printedAt ?? gameMinutes - 1440;
+      const edition = makeEdition(since, newsLog, { economy, mayor: mayorStep.mayor, buildings, money, now: gameMinutes });
+      newspapers = [edition, ...newspapers].slice(0, 10);
+      if (!state.tool && !state.placing) notice = `Die neue ${PAPER_NAME} ist da: „${edition.headline.title}“`;
+    }
+    set({ economy, buildings, growthPoints, notice, money, gameMinutes, loans, stats, storage, ships: shipping.ships, shipSales, gold, incidents: incidentStep.incidents, incidentLastAt: incidentStep.lastAt, mayor: mayorStep.mayor, newsLog, newspapers });
   },
+
+  setSalary: (salary) => set((s) => jailed(s.mayor, s.gameMinutes) ? {} : ({ mayor: { ...s.mayor, salary: Math.max(0, Math.min(SALARY_MAX, Math.round(salary))) } })),
+  acceptBribe: (id) => {
+    const state = get();
+    const done = acceptOffer(state.mayor, id, state.gameMinutes);
+    if (!done) return;
+    set({
+      mayor: done.mayor,
+      money: state.money - done.townCost,
+      growthPoints: state.growthPoints + done.growthPoints,
+      notice: `${OFFER_LABEL[done.offer.kind]} angenommen: +${done.offer.amount.toLocaleString("de-DE")} € aufs Privatkonto${done.townCost > 0 ? ` (die Stadt zahlt ${done.townCost.toLocaleString("de-DE")} €)` : ""}`,
+    });
+  },
+  repayCity: (amount) => {
+    const state = get();
+    const done = repayTown(state.mayor, amount, state.economy?.residents ?? 0, state.gameMinutes);
+    if (done.paid <= 0) return;
+    set({
+      mayor: done.mayor,
+      money: state.money + done.paid,
+      notice: `${Math.round(done.paid).toLocaleString("de-DE")} € an die Stadt zurückgegeben – das Ansehen steigt${done.cut > 0 ? `, der Skandal ist ${Math.round(done.cut * 100)} % kürzer` : ""}`,
+    });
+  },
+  readNewspaper: () => set((s) => ({ newsRead: s.newspapers[0]?.day ?? s.newsRead })),
+  setLaundering: (building, on) => {
+    const state = get();
+    if (jailed(state.mayor, state.gameMinutes)) return;
+    const b = state.buildings.find((x) => x.id === building);
+    set({
+      mayor: setFront(state.mayor, building, on),
+      notice: b ? (on ? `${levelName(b)} wäscht ab jetzt Schwarzgeld des Bürgermeisters` : `${levelName(b)} wäscht kein Geld mehr`) : null,
+    });
+  },
+  setProtection: (building, share) => {
+    const state = get();
+    if (jailed(state.mayor, state.gameMinutes)) return;
+    const b = state.buildings.find((x) => x.id === building);
+    set({
+      mayor: setRacket(state.mayor, building, share),
+      notice: b ? (share > 0 ? `Schutzgeld: ${levelName(b)} zahlt ab jetzt ${Math.round(share * 100)} % vom Gewinn` : `${levelName(b)} zahlt kein Schutzgeld mehr`) : null,
+    });
+  },
+  playRoulette: (bet, stake) => {
+    const state = get();
+    if (jailed(state.mayor, state.gameMinutes) || !state.buildings.some((b) => b.kind === "casino")) return null;
+    if (stake <= 0 || stake > state.mayor.account) {
+      set({ notice: "Nicht genug auf dem Privatkonto für diesen Einsatz" });
+      return null;
+    }
+    const n = Math.floor(rouletteRnd() * 37);
+    const payout = payoutOf(bet, n, stake);
+    const spin: RouletteSpin = { n, bet, stake, payout };
+    set({
+      // Stakes come out of the dirty money first; winnings are paid out clean (a way to launder, at the house edge).
+      mayor: (() => {
+        const paid = spend(state.mayor, stake, true);
+        return { ...paid, account: paid.account + payout };
+      })(),
+      // No ticker message: the panel reveals the number after the ball has run.
+      rouletteHistory: [spin, ...state.rouletteHistory].slice(0, 12),
+    });
+    return spin;
+  },
+  declineBribe: (id) => set((s) => ({ mayor: { ...s.mayor, offers: s.mayor.offers.filter((o) => o.id !== id) } })),
+  embezzle: (amount) => {
+    const state = get();
+    if (jailed(state.mayor, state.gameMinutes)) return;
+    const n = Math.min(amount, Math.max(0, state.money));
+    if (n <= 0) {
+      set({ notice: "In der Stadtkasse ist nichts zu holen" });
+      return;
+    }
+    set({
+      money: state.money - n,
+      mayor: {
+        ...state.mayor,
+        account: state.mayor.account + n,
+        dirty: state.mayor.dirty + n,
+        taken: state.mayor.taken + n,
+        suspicion: Math.min(100, state.mayor.suspicion + embezzleSuspicion(n, state.economy?.residents ?? 0)),
+      },
+      notice: `${n.toLocaleString("de-DE")} € aus der Stadtkasse aufs Privatkonto umgebucht`,
+    });
+  },
+
+  raiseAlarm: (id) => {
+    const state = get();
+    const inc = state.incidents.find((i) => i.id === id);
+    if (!inc || !state.economy) return;
+    const needsStation = !inc.station;
+    const needsAmbulance = !!inc.injured && !inc.ambulance && !inc.ambulanceDone;
+    if (!needsStation && !needsAmbulance) return;
+    const main = needsStation ? dispatch(inc, state.buildings, state.incidents, state.economy) : null;
+    const amb = needsAmbulance ? dispatchAmbulance(inc, state.buildings, state.incidents, state.economy) : null;
+    const station = main?.station ?? inc.station;
+    const ambulance = amb?.hospital ?? inc.ambulance ?? null;
+    // A fire: the police comes along to close the street (if a patrol car is free), only once the fire brigade goes.
+    const pol = inc.kind === "fire" && main?.station && !inc.police ? dispatchPolice(inc, state.buildings, state.incidents, state.economy) : null;
+    const police = pol?.station ?? inc.police ?? null;
+    const parts: string[] = [];
+    if (main) parts.push(main.station ? (inc.kind === "accident" ? "Streifenwagen unterwegs" : "Feuerwehr rückt aus") : `${inc.kind === "accident" ? "Polizei" : "Feuerwehr"}: ${main.reason}`);
+    if (pol) parts.push(pol.station ? "Polizei sperrt die Straße" : `Polizei: ${pol.reason}`);
+    if (amb) parts.push(amb.hospital ? "Krankenwagen unterwegs" : `Krankenwagen: ${amb.reason}`);
+    set({
+      incidents: state.incidents.map((i) => (i.id === id ? { ...i, station, ambulance, police } : i)),
+      notice: `${main?.station || amb?.hospital ? "Alarm ausgelöst" : "Alarm ohne Erfolg"} – ${parts.join(", ")}`,
+    });
+  },
+  flyToIncident: (id) => {
+    const inc = get().incidents.find((i) => i.id === id);
+    if (!inc) return;
+    set((s) => ({ focus: { x: inc.x, z: inc.z, n: (s.focus?.n ?? 0) + 1 } }));
+  },
+
+  growStep: () => {
+    const state = get();
+    if (state.speed === 0 || !state.economy) return;
+    const permits: Permits = state.buildings.some((b) => b.kind === "townhall") ? state.permits : "all";
+    if (permits === "none") return;
+    const done = state.roads;
+    let { growthPoints, buildings, notice } = state;
+    const finishedCanals = state.canals.filter((c) => !state.jobs.includes(c.id));
+    const grid = depthGrid(finishedCanals);
+    const others = [...done, ...state.rails, ...state.canals];
+    const deadline = performance.now() + GROW_SLICE_MS;
+    // Up to `speed` new houses per tick (plus a little catch-up), within a time slice.
+    const maxSteps = state.speed * 2;
+    let steps = 0;
+    while (growthPoints >= GROWTH_STEP && steps < maxSteps && (steps === 0 || performance.now() < deadline)) {
+      if (growthBlocked && growthBlocked.buildings === buildings && growthBlocked.roads === done && growthBlocked.ticks > 0) break;
+      const result = timed("Wachstum (eigene Zeitscheibe)", () =>
+        growOnce(buildings, done, others, grid, state.economy!, growthRnd, () => newId("road").replace("road", "building"), permits, state.gameMinutes),
+      );
+      steps++;
+      if (result.buildings === buildings) {
+        growthPoints = GROWTH_STEP; // no room: wait for new streets
+        // Plots still unchecked (cold cache): try again soon, the next search may find some.
+        growthBlocked = { buildings, roads: done, ticks: plotsUnchecked() > 0 ? 2 : GROWTH_RETRY };
+        break;
+      }
+      growthPoints -= GROWTH_STEP;
+      growthBlocked = null;
+      buildings = result.buildings;
+      if (!state.tool && !state.placing && result.event) notice = result.event;
+    }
+    if (buildings !== state.buildings || growthPoints !== state.growthPoints) set({ buildings, growthPoints, notice });
+  },
+
+  incidentOnSite: (id) =>
+    set((s) => (s.incidents.some((i) => i.id === id && !i.onSite) ? { incidents: s.incidents.map((i) => (i.id === id ? { ...i, onSite: true } : i)) } : {})),
+  resolveIncident: (id) =>
+    set((s) => {
+      const inc = s.incidents.find((i) => i.id === id);
+      if (!inc || inc.cleared) return {};
+      const fee = MISSION_FEE[inc.kind];
+      const next = { ...inc, cleared: true };
+      return {
+        incidents: incidentDone(next) ? s.incidents.filter((i) => i.id !== id) : s.incidents.map((i) => (i.id === id ? next : i)),
+        money: s.money + fee,
+        notice: `${inc.kind === "accident" ? "Unfallstelle geräumt" : "Brand gelöscht"} – Einsatzgebühr +${fee.toLocaleString("de-DE")} €`,
+      };
+    }),
+  policeDone: (id) =>
+    set((s) => {
+      const inc = s.incidents.find((i) => i.id === id);
+      if (!inc || inc.policeDone) return {};
+      const next = { ...inc, policeDone: true };
+      return { incidents: incidentDone(next) ? s.incidents.filter((i) => i.id !== id) : s.incidents.map((i) => (i.id === id ? next : i)) };
+    }),
+  ambulanceDone: (id) =>
+    set((s) => {
+      const inc = s.incidents.find((i) => i.id === id);
+      if (!inc || inc.ambulanceDone) return {};
+      const next = { ...inc, ambulanceDone: true };
+      return {
+        incidents: incidentDone(next) ? s.incidents.filter((i) => i.id !== id) : s.incidents.map((i) => (i.id === id ? next : i)),
+        money: s.money + MISSION_FEE.ambulance,
+        notice: `Verletzte ins Krankenhaus gebracht – Krankenkasse zahlt +${MISSION_FEE.ambulance.toLocaleString("de-DE")} €`,
+      };
+    }),
 
   setSpeed: (speed) => set({ speed }),
 
@@ -756,6 +1159,12 @@ export const useCity = create<CityState>((set, get) => ({
     }
     set({ houseStyle });
   },
+  toggleRain: () => set((s) => ({ showRain: !s.showRain })),
+  toggleSnow: () =>
+      set((s) => ({
+        showSnow: !s.showSnow,
+        showRain: s.showSnow ? s.showRain : false,
+      })),
 
   takeLoan: (offerId) => {
     const state = get();
@@ -797,9 +1206,16 @@ export const useCity = create<CityState>((set, get) => ({
 
   bulldoze: (p) => {
     const state = get();
+    // Fire ruins go first: one click clears the plot for new houses.
+    const ruin = state.buildings.find((b) => b.kind === "ruin" && insideFootprint(b, p.x, p.z, 1));
+    if (ruin) {
+      get().demolish(ruin.id);
+      set({ notice: "Brandruine abgerissen – das Grundstück wird wieder bebaut" });
+      return;
+    }
     const target = bulldozeTarget(p, state);
     if (!target) {
-      set({ notice: "Hier ist nichts zum Abreißen – Straße, Gleis, Kanal oder Stromleitung anklicken" });
+      set({ notice: "Hier ist nichts zum Abreißen – Straße, Gleis, Kanal, Stromleitung oder Brandruine anklicken" });
       return;
     }
     const key = target.network;
@@ -844,6 +1260,31 @@ export const useCity = create<CityState>((set, get) => ({
     }
     const ship = newShip(type, harbourId, `ship-${Date.now().toString(36)}-${(idCounter++).toString(36)}`, state.ships);
     set({ ships: [...state.ships, ship], money: state.money - type.cost, notice: `${type.label} „${ship.name}“ gekauft` });
+  },
+
+  buyTrain: (depotId, typeId) => {
+    const state = get();
+    const type = trainType(typeId);
+    const depot = state.buildings.find((b) => b.id === depotId && b.kind === "traindepot");
+    if (!depot) return;
+    const fleet = state.trains.filter((t) => t.depot === depotId);
+    if (fleet.length >= depotSlots(depot)) {
+      set({ notice: `Alle ${depotSlots(depot)} Abstellgleise belegt – Stellwerk ausbauen` });
+      return;
+    }
+    if (type.cost > state.money) {
+      set({ notice: `Nicht genug Geld (${type.cost.toLocaleString("de-DE")} € nötig)` });
+      return;
+    }
+    const train = newTrain(type, depotId, `train-${Date.now().toString(36)}-${(idCounter++).toString(36)}`, state.trains);
+    set({ trains: [...state.trains, train], money: state.money - type.cost, notice: `${type.label} „${train.name}“ gekauft` });
+  },
+  sellTrain: (id) => {
+    const state = get();
+    const train = state.trains.find((t) => t.id === id);
+    if (!train) return;
+    const back = Math.round(trainType(train.type).cost * TRAIN_RESALE);
+    set({ trains: state.trains.filter((t) => t.id !== id), money: state.money + back, notice: `„${train.name}“ verkauft (+${back.toLocaleString("de-DE")} €)` });
   },
 
   sellShip: (id) => {
@@ -1125,8 +1566,11 @@ export const useCity = create<CityState>((set, get) => ({
     const prev = history[history.length - 1];
     if (!prev) return;
     const ids = new Set([...prev.roads, ...prev.rails, ...prev.canals].map((p) => p.id));
+    // Villa and boathouse were paid privately: undoing their construction or upgrade refunds the account.
+    const refund = villaValue(get().buildings) - villaValue(prev.buildings);
     set({
       ...prev,
+      mayor: refund !== 0 ? { ...get().mayor, account: get().mayor.account + refund } : get().mayor,
       history: history.slice(0, -1),
       jobs: jobs.filter((id) => ids.has(id)),
     });

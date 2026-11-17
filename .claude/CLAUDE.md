@@ -179,7 +179,7 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
 
 ## HUD (Stil: SimCity 2013, Referenz chichanart.com/simcity-2-1)
 
-- Baukategorien: Straßen, Autobahn-Knoten, Schiene, Wasserwege (Kanal, Binnenhafen), Luftfahrt (Flugplatz), Versorgung (inkl. Arbeitsamt), Energie,
+- Baukategorien: Straßen, Autobahn-Knoten, Schiene (inkl. Bahnhof, Stellwerk), Wasserwege (Kanal, Binnenhafen), Luftfahrt (Flugplatz), Versorgung (inkl. Arbeitsamt), Sicherheit (Polizeiwache, Feuerwache, Gefängnis), Energie,
   Wirtschaft (Bäckerei, Läden, Discounter, Freizeit), Industrie (Bauernhof, Mühle, Fabriken, Erzbergwerk, Hühnerhof,
   Lebensmittelfabrik, Import-Export-Kontor, Lagerhalle).
 - `components/city/Hud.tsx`: Stadt-Panel oben links, Meldungsleiste oben mittig, untere
@@ -198,7 +198,8 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   Hügel, Gebirgszüge) folgt aus dem Seed. Mitte (`START_RADIUS`) bleibt flach und trocken.
   Store `newWorld(seed)` erzeugt Welt + Dorf; die Szene wird per `key={seed}` neu gemountet,
   damit alle Caches (Tiefenraster, Bäume) die neue Welt nutzen. Beim Laden: zufälliger Seed.
-- **Dorf:** `village.ts` – Kreuzung, Häuser, Kirche, Brunnen (Wasserwerk Stufe 1).
+- **Dorf:** `village.ts` – Kreuzung, Häuser, Kirche, Brunnen (Wasserwerk Stufe 1), Rathaus und Bank an der Hauptstraße
+  (Nordwest, Vorderkante am Gehweg via `sizeOf` – vorher 42 m zurückgesetzt und ohne Straßenanschluss).
 - **Wirtschaft:** `economy.ts` – Gebäudetypen (`BUILDINGS`), `simulate()` pro Minute,
   Takt 1 s (`tick`, Geld += Bilanz/60). Kette: Bauernhof (Weizen, Milch) → Bäckerei (+Wasser)
   → Brot an Einwohner. Wasser über Straßennetz (Leitungen), Wasserwerk Stufen 1–3 ausbaubar.
@@ -357,6 +358,61 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
 - Weitere Kandidaten: ~930 Draw-Calls (Einzelgebäude aus vielen Boxen → mergen/instanzieren), 263 Skinned
   Meshes (Menschen/Tiere: Animation nur nah, sonst ausblenden), `simulate` ~7 ms je Takt (O(n²)-Stellen wie
   `flows.filter` je Gebäude, `roadNetworks` Punktvergleich aller Straßenpaare), Postprocessing in voller Auflösung.
+
+## Performance-Test und Optimierungen (Nov. 2026, Bericht `docs/performance.md`)
+
+- **Test:** `?bench` an die URL (auch Produktions-Build), dann `await __city.bench()` (`components/city/Benchmark.ts`):
+  Takt je Tempo mit Abschnitten (`timed()` aus `lib/city/perf.ts`), Bildzeiten aus vier Kamerapositionen Tag/Nacht,
+  Ruckler. Ohne Browser: `node --import ./scripts/perf/register.mjs scripts/perf/tick-profile.ts <save.json>` (`--cpu-prof`).
+  Mindest-Hardware und Messwerte im Bericht.
+- **StaticBatcher (`StaticBatcher.tsx`, in `Buildings`):** bündelt statische Teile aller Einzelgebäude (`userData.base`) je
+  Material in `BatchedMesh`. Originale bleiben im Graph, aber `visible=false` + `userData.batched`, Matrizen eingefroren;
+  reine Gruppen werden ausgeblendet. Änderungen über eine numerische Signatur je Gebäude (16 Gebäude/Bild + voller
+  Durchlauf bei neuem `buildings`). **Bewegte Teile in Gebäuden mit `userData={DYNAMIC}` markieren** (aus Buildings.tsx),
+  sonst frieren sie ein. Transparente, instanzierte, Skinned- und Mehrfach-Materialien werden nie gebündelt; Schilder mit
+  eigener CanvasTexture auch nicht. Gleich aussehende Inline-Materialien (`<meshStandardMaterial color=…>`, ohne
+  Shader-Hook) teilen sich ein Bündel. Sichtprüfung je Gebäude einmal pro Bild (`cull`, Rand 45 m für Schatten) plus
+  three.js-Instanz-Culling für den Schattenpass. Shader-Hooks müssen `USE_BATCHING`/`batchingMatrix` beachten (siehe
+  `nightGlow.ts`); `GroundShadows` liest gebündelte Teile weiter (`userData.batched`).
+- **Laternen:** alle in `StreetLamps` (Roads.tsx) als zwei statische Instanz-Meshes; Straßen melden ihre Punkte per
+  `onLamps`. Keine drei-`Instances` für große Mengen (rechnet jedes Bild alle Matrizen).
+- **Boden-Shader:** Felder ≥ 75 m (Warp, Region, Macro, Mid) im Vertex-Shader (`vWarped`, `vFields`), `noTileAt` einmal je
+  Koordinate für alle Texturen, nur der aktive Stil wird gerechnet. Neue großflächige Effekte ebenso per Vertex.
+- **Verborgene Figuren:** `matrixWorldAutoUpdate = visible` (People, Herd) – Skelette kosteten sonst jedes Bild.
+- **Simulation:** `roadNetworks` gecacht je Straßenliste, Trafo-Zuordnung (`supplyCache`, WeakMap je Gebäude),
+  `accessRoad` zusätzlich mit Objekt-Cache (Gebäude werden nie verändert, nur ersetzt – das gilt weiter als Regel),
+  Lieferflüsse einmal vorsortiert (`soldBy`/`boughtBy`, `deliveredOutput`). Keine `flows.filter`/`buildings.filter`
+  je Gebäude mehr einbauen.
+- **Spieluhr:** `CityBuilder` plant den Takt gegen die echte Zeit (kein Drift, kein Nachholen im Schwall); `growStep`
+  läuft nach dem nächsten Bild in eigener Zeitscheibe (`GROW_SLICE_MS` 8 ms) und baut bis zu `Tempo × 2` Häuser je Takt
+  (**vorher max. 1 Haus je Takt – Tempo 2/3 beschleunigte das Wachstum nicht**). `clockMinutes()` = Spielzeit inkl.
+  Bruchteil seit dem Takt: für Sonne, Himmel und Uhr (alles, was sichtbar mit der Zeit läuft).
+- Schiffsrouten gecacht je Hafenposition + Raster (`cachedRoute`), `ShipModel` memoisiert.
+- **FPS-Anzeige:** Einstellungen → Anzeige → „FPS anzeigen“ (`FpsMeter` in Hud.tsx, eigener kleiner zustand-Store
+  `useDisplay`, pro Browser in `localStorage` `citypower.showFps`, erst nach dem Mount gelesen wegen Server-Rendering).
+- **Runde 2 (14.11.2026, Zahlen im Bericht):**
+  - `useKitParts` (HousePack.tsx) teilt die Teile je Kit-Modell über `kitPartsCache` – **nie pro Komponente klonen**
+    (vorher 2,7 GB: jedes Pack-Gebäude klonte alle Modelle). Geteilte Geometrien werden nicht disposed.
+  - **Simulation im Worker:** `lib/city/sim.worker.ts` (Wirtschaft `simulate` + Wachstum `growOnce`), `sim-client.ts`
+    (schickt nur geänderte Listen, eine Anfrage gleichzeitig), Store `tickAsync` (vom Taktgeber in CityBuilder
+    aufgerufen): Ergebnis → `tick(economy)`, danach Wachstum; hat der Spieler inzwischen gebaut, wird der Wachstumsschritt
+    verworfen (`buildingsDropped`). Der Worker gleicht Gebäude per Wert ab (Identität bleibt für die Caches). `tick()` und
+    `growStep()` bleiben als synchroner Rückfall (und für Tests/Benchmark). Neue Eingaben von `simulate` müssen auch in
+    `SimRequest` und `tickAsync`. Dev: `__city.sim()`.
+  - **Aus dem Matrix-Durchlauf genommen:** three.js besucht jedes Objekt je Bild. StaticBatcher setzt für statische
+    Teilbäume `updateMatrixWorld = NOOP` (Entry `roots`), People/Herd für unsichtbare Figuren (`skipMatrices`).
+    Wer Transformationen in einem gebündelten Gebäude ändert, muss sicherstellen, dass die Signatur es merkt
+    (`signatureOf` hasht alle statischen Nachfahren).
+  - **Straßen gebündelt:** zweiter StaticBatcher in `Roads` (`__roadBatcher`); fertige `RoadView`-Gruppen tragen
+    `userData.base`, Baustellen nicht.
+  - **Vorauswahl:** `pathsNear(points, paths, margin)` (adjacency.ts) vor Punkt-für-Punkt-Tests gegen „alle Wege“;
+    `buildRoadLayers` filtert Kreuzungen auf die Nähe der Straße.
+  - `useProfiles`/`useShapedGrid` teilen ein modulweites Ergebnis (19 Aufrufer rechneten einzeln).
+  - Bäume: `standingTrees` (Wege, selten) + `felledBy` (Gebäude, je Gebäude gecacht) → `forests` nur neu, wenn sich die
+    gefällten Bäume ändern. Kontaktschatten je Gebäude gecacht über `unitSignature` des Batchers.
+  - Browser-Messung ohne MCP: Chrome mit `--remote-debugging-port=9333 --user-data-dir=<tmp>` starten und per
+    DevTools-Protokoll (WebSocket, `Runtime.evaluate`, `Profiler`) steuern; CPU-Drosselung gilt nur je Verbindung.
+- Offen (siehe Bericht): GPU in der Horizont-Ansicht (~38 FPS), Kaltstart 11 s.
 
 ## Rendering-Qualität
 
@@ -521,7 +577,8 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   über `LEVEL_SIZE`): Bäckerei → Backfabrik (×4, Kunden nach Größe verteilt), Holzfabrik →
   Großsägewerk → Holzwerk (×1,8/×3), Möbelfabrik → Große Möbelfabrik → Möbelwerk (×1,8/×3),
   Möbelhaus Stufe 4 „Möbelzentrum“ (blaue Halle, gelbes Schild, großer Parkplatz; bewusst ohne
-  echte Markennamen). Bei wachsendem Grundstück wird das Basismodell um die Tiefendifferenz nach
+  echte Markennamen). Im Pack-Stil: breite Kit-Halle `building-q`, über das ganze 64 × 46-Grundstück gestreckt
+  (`whole[4].height` 16 m → `sx`/`sz` getrennt) – die schmale `building-o` war kleiner als Stufe 3 (Nutzer-Bug). Bei wachsendem Grundstück wird das Basismodell um die Tiefendifferenz nach
   vorn verschoben (`shift`), damit es an der Straße bleibt.
 - Fußgänger laufen `WALK_LIFT` (0,5 m) über dem Wegprofil (Gehweg + Fußpunkt des Modells).
 - **Leder & Schuhe:** Schlachthof liefert Häute als Nebenprodukt (`HIDES_PER_CATTLE/PIG`) →
@@ -750,6 +807,197 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   Distanzen in `Float64Array` (Float32 rundet und lässt gültige Heap-Einträge verwerfen!).
   `__city.route(x, z)` im Dev-Modus zum Testen.
 
+## Polizei, Feuerwehr, Einsätze (`lib/city/incidents.ts`, `traffic.ts`, `Traffic.tsx`, `Fires.tsx`)
+
+- Gebäude `police` (Polizeiwache / Polizeirevier / Polizeipräsidium) und `firestation` (Feuerwache / Hauptfeuerwache /
+  Berufsfeuerwehr), öffentlich, HUD-Kategorie „Sicherheit“, fester Grundriss, `LEVELS`-Faktor = Fahrzeuge (1/2/3),
+  Umkreis `SERVICE_RADIUS` (450/650/900 bzw. 400/600/800 m). Modelle klassisch (`PoliceStation`/`FireStation` in
+  Buildings.tsx, auch im Pack-Stil). Stimmung „Sicherheit“/„Brandschutz“ (`safety`/`fireCover` = Einwohneranteil im
+  Umkreis einer angeschlossenen Wache, Zuzug ×(0,96 + 0,08·safety)(0,97 + 0,06·fireCover)); Umkreis-Scheibe in `JobCentreArea`.
+- **Einsätze (`incidents` im Store/Spielstand), Nutzerwunsch „selten, Alarm selbst auslösen“:** `stepIncidents` im Takt:
+  Unfall (Chance ∝ Straßen-km, Deckel 0,0025/min) oder Hausbrand (∝ Häuser, Deckel 0,0015/min), max. 4 gleichzeitig und
+  mindestens `MIN_GAP` (120 Spielminuten) zwischen zwei Einsätzen (`incidentLastAt`, nicht im Spielstand). Der **Spieler**
+  löst den Alarm aus (Notruf-Leiste `EmergencyCalls` unter der Meldungszeile: „Alarm auslösen“, „Zeigen“ =
+  `flyToIncident`; Store `raiseAlarm` → `dispatch`): Wache gleicher Art im **selben Straßennetz** (`economy.roadNetworkOf`
+  für Straßen, `networkOf` für Häuser), Einsatzort im Umkreis, freies Fahrzeug (`busyVehicles` < `vehiclesOf`), nächste
+  zuerst; sonst Meldung mit Grund. Ohne Alarm: Unfall blockiert `ACCIDENT_CLEAR` (120 min), Brand macht das Haus nach
+  `FIRE_BURN` (60 min) zur **Brandruine** (`kind: "ruin"`, keine Bewohner/Steuern, Problem in der Karte, Modell `Ruin`
+  in Buildings.tsx) – sie muss abgerissen werden (Knopf „Abreißen“ in der Karte oder Klick mit dem Bagger, rote Vorschau in
+  `RoadBuilder.tsx`; Ruinen gehen beim Bagger vor Wegen), dann bebaut das Wachstum das Grundstück neu.
+  Zugewiesene Einsätze beendet die Szene (`resolveIncident`), Sicherheitsnetz 240 min. Abriss einer Wache ruft zurück.
+- **Krankenwagen (Nutzerwunsch „bei Bedarf“):** 60 % der Unfälle / 40 % der Brände haben Verletzte (`injured`). Der Alarm
+  schickt dann zusätzlich einen Krankenwagen (`dispatchAmbulance`): nächstes Krankenhaus im selben Straßennetz bis
+  `AMBULANCE_RADIUS` (1.200 m) mit freiem Wagen (`AMBULANCES` = 2, `busyAmbulances`). Eigene Mission (`Mission.ambulance`,
+  `role: "ambulance"`), hält hinter dem Wrack bzw. vor dem Löschfahrzeug, 30 s, meldet `ambulanceDone`. Ist Polizei/Feuerwehr
+  vorher fertig, bleibt der Einsatz als `cleared` stehen, bis der Krankenwagen fertig ist.
+- **Geld:** je erledigtem Einsatz `MISSION_FEE` (Unfall 900 €, Brand 2.500 €, Krankentransport 1.200 € „Krankenkasse“),
+  direkt aufs Konto mit Meldung; laufend `budget.emergency` = Einwohner × (safety · `POLICE_FINES` 0,006 + fireCover ·
+  `FIRE_LEVY` 0,004) €/min („Bußgelder & Feuerschutzabgabe“ im Finanzamt, in `income`/Statistik enthalten).
+- **Fahrzeuge in Echtzeit (`Traffic.tsx`, Missionen):** `Car.role`/`route`/`stopAt`/`parked`. Abfahrt am Straßenpunkt
+  vor der Wache (`stationExit`), Ziel = die Fahrtrichtung der Unfallstraße mit kürzerer Route (`nearestEdges` +
+  `routeEdges`, Dijkstra über den Spurgraphen, Wenden an Straßenenden mit Strafe). Blaulicht = zwei abwechselnd
+  leuchtende Instanz-Boxen (toneMapped false → Bloom). Autos vor dem Fahrzeug rücken nach rechts (`yieldT`,
+  `YIELD_SHIFT`) und kriechen; das Fahrzeug fährt links vorbei (`passingTraffic`/`laneShift`), ignoriert Ampeln,
+  umfährt parkende Fahrzeuge. Jeder Unfall hat ein Wrack (`syncWrecks`: schräger Sedan als geparktes Auto ohne Licht,
+  Spur blockiert → Stau), auch ohne Polizei. Am Ort: `parked` → Pylonen (`cone.glb`) + Trümmer (`debris-*.glb`),
+  `ON_SITE_SECONDS`, dann Rückfahrt und Löschen (das Wrack verschwindet mit dem Einsatz).
+  Dev: `window.__traffic` = { graph, missions, cars, closures }. Flammen/Rauch je Brand in `Fires.tsx` (gehen aus, wenn `onSite`).
+  Beim Testen mit `setState({incidents:[…]})` Einsätze setzen; ein neuer Spurgraph (HMR, Straßenbau) startet Missionen neu.
+
+- **Vollsperrung (Nutzerwunsch):** Solange ein Fahrzeug eines Einsatzes vor Ort steht (`phase: "onsite"`), ist die ganze Straße
+  von Knoten zu Knoten in beiden Richtungen gesperrt (`syncClosures` in Traffic.tsx, Kanten aus `nearestEdges`, Pylonenreihe an
+  jeder Einfahrt). `chooseNext(..., closed)` meidet gesperrte Kanten (Straße: wenden, Autobahn: am Knoten warten = Stau),
+  `stepCars` wählt neu, wenn `next` gesperrt wird; `closeStreet` lässt Autos vor der Einsatzstelle wenden. Einsatzfahrzeuge
+  ignorieren die Sperre und fahren `EMERGENCY_SPEED` (1,8×) mit stärkerer Beschleunigung (`YIELD_RANGE` 60 m).
+- **Brand = Feuerwehr + Polizei (+ Krankenwagen):** `raiseAlarm` schickt beim Brand zusätzlich einen Streifenwagen
+  (`dispatchPolice`, `Incident.police`/`policeDone`, optional – ohne freien Wagen sperrt die Feuerwehr selbst). Missionen haben
+  `unit` (`main`/`ambulance`/`police`); die Polizei bleibt, bis die Feuerwehr abgefahren ist (+`POLICE_LINGER` 8 s), und meldet
+  `policeDone`. Ein Einsatz endet erst, wenn alle Einheiten fertig sind (`incidentDone`). `busyVehicles` zählt Brand-Einsätze mit.
+- **Gebäudeliste (`BuildingsMenu` in Hud.tsx, oben rechts „Gebäude“):** alle gebauten Objekte außer Wohnhäusern, nach Art
+  gruppiert und eingeklappt (Kopf mit Anzahl, Klick klappt auf; Brandruinen zuerst, rot, aufgeklappt), ohne Suche; Klick = `flyTo`.
+  Aufgeklappt war die Liste im Nutzer-Spielstand ~10.000 px lang – Polizei/Feuerwehr wirkten „fehlend“.
+- **Gefängnis (`prison`, Sicherheit):** Gefängnis / Justizvollzugsanstalt / Hochsicherheitsgefängnis (56 × 48 m, `LEVELS`-Faktor
+  1/2,5/6 × `PRISON_PLACES` 100 Haftplätze). Wirkt nur mit Polizeiwache im selben Straßennetz (sonst Problem „bleibt leer“):
+  Häftlinge = min(Plätze, Einwohner × `INMATES_PER_RESIDENT`), Land zahlt `PRISON_REFUND` €/Häftling/min (`budget.justice`,
+  Finanzamt „Haftkostenerstattung“), Polizei-Bußgelder und `safety` +`PRISON_POLICE_BONUS` (40 %). Modell `Prison` in
+  RailwayBuildings.tsx (Mauer, Wachtürme, Zellentrakte je Stufe).
+
+## Bürgermeister: Privatkonto, Korruption, Villa (`mayor.ts`, `MayorPanel.tsx`, `Villa.tsx`, Nutzerwunsch)
+
+- **Privatkonto** (`mayor` im Store/Spielstand, `MayorState`): Gehalt aus der Stadtkasse (`salary` €/min, Standard 25, bis
+  `SALARY_MAX`; „angemessen“ = `fairSalary` 1,5 € je 100 Einwohner). Knopf „Bürgermeister“ oben rechts (Kontostand, rotes Abzeichen =
+  offene Angebote) öffnet das Panel (`panel: "mayor"`), ebenso die Villa-Karte.
+- **Angebote** (`stepMayor`, alle ≥ 150 Spielminuten, max. 4, 360 min gültig, nicht im Skandal; Nutzerwunsch „rasch bereichern“
+  – vorher ~10× kleiner): Baugenehmigung (20 k + 25 €/Einwohner, +`PERMIT_POINTS`), Steuerrabatt (großer Steuerzahler 5 Tage
+  steuerfrei, 60 % der Ersparnis + 20 k + 5 €/Einw.), überteuerter Auftrag (50 k + 40 €/Einw., Stadt zahlt 2,5×). Dazu
+  „Stadtkasse abzweigen“ (`embezzle`) und **Schutzgeld** (`rackets`, `setProtection`: 10/25/50 % vom Gewinn eines Betriebs,
+  Abschnitt in jeder Firmenkarte `ProtectionSection`; +5 Verdacht beim Start, täglich 2 + 10·Anteil je Betrieb; die Stadt verliert
+  den Steueranteil auf das abgeschöpfte Geld).
+- **Verdacht** 0–100: Baugenehmigung +6, Steuerrabatt +10, Auftrag +15, sinkt 1,5 je Spielstunde. Skandal sicher ab 100 (geprüft
+  **vor** dem Abklingen im Takt), sonst Chance 0,0012 × s³ je Minute: 60 % des Kontos beschlagnahmt (gehen an die Stadt), 3 Tage
+  Zuzug ×0,5, Stimmungsfaktor „Bürgermeister“ 0,1 mit Gewicht 3, Verdacht danach 30, alle Deals enden. **Gefängnis:** zweiter
+  Skandal innerhalb `PROBATION_MINUTES` (10 Tage, `lastScandalAt`, `null` = noch keiner – JSON kennt kein −Infinity) → ganzes
+  Konto beschlagnahmt, Villa enteignet (aus `buildings` entfernt), `jailUntil` 5 Tage: kein Gehalt, keine Aktionen (alle Store-
+  Aktionen prüfen `jailed`).
+- **Geldwäsche (Nutzerwunsch):** Bestechung, Schutzgeld und Stadtkasse sind Schwarzgeld (`dirty`, Teil von `account`).
+  Pizzerias (`pizzeria`, neu: Freizeit, Mehl + Milch → Mahlzeiten, teilt die Gäste mit Restaurants, Modell `Pizzeria.tsx`) und
+  Recyclinghöfe als Waschanlage (`fronts`, `setLaundering`, Abschnitt `LaunderingSection` in deren Karten): `WASH_RATE` 5.000 /
+  8.000 €/min × Stufe, Gebühr 15 % / 10 %, nur angeschlossen; je `8000 + 0,8·Einwohner` gewaschene € −1 Verdacht, je Anlage
+  +0,5/Tag. Natürliches Abklingen jetzt 1/Stunde. Skandal beschlagnahmt 60 % Schwarzgeld + 15 % sauberes Geld (`SEIZED_CLEAN`),
+  Haft alles. Ausgaben über `spend`: Villa zuerst sauberes Geld, Casino-Einsatz zuerst Schwarzgeld (Gewinne sauber).
+- **Der Stadt zurückgeben** (`repayTown`, `repayCity`): Schwarzgeld zuerst, Geld in die Stadtkasse. `goodwill` (Ansehen, max. 0,5,
+  je `100 k + 20 €/Einw.` +1, −0,03/Tag) wird zur Stimmung „Bürgermeister“ addiert (auch im Skandal), Verdacht −1 je
+  `16 k + 1,6 €/Einw.`. Läuft ein Skandal, kürzt die Zahlung die Restzeit um bis zu 94 % (`SCANDAL_CUT`, voll ab
+  `scandalRepay` = 50 k + 25 €/Einw., darunter anteilig).
+- **Bootshaus** (`boathouse`, Nutzerwunsch, `Boathouse.tsx`): einmal pro Stadt, vom Privatkonto (`MAYOR_PRIVATE` = Villa +
+  Bootshaus: Bezahlen, Rückgängig-Erstattung, Enteignung bei Haft), ohne Straße, 16 × 26 m: vorne 12 m Land, hinten
+  `BOAT_JETTY` 14 m Steg überm Wasser. Platzierung: Rücken zum Wasser (`backToWater`), vom Cursor aus zur Uferlinie
+  verschoben; der Landteil darf bis knapp über den Wasserspiegel reichen (Strand liegt unter 0 m), 2 m Spielraum für schräge
+  Ufer; am Stegende muss Wasser sein. **Nicht eingeebnet** (`UNLEVELLED`, sonst füllt das Pad den See). Höhe = Vorderkante.
+  Stufen (Nutzerwunsch, festes Grundstück): Bootshaus (Holzhaus mit Satteldach, Sprossenfenster mit weißen Rahmen, Glastüren
+  zum See, Blumenkästen, Schornstein) → mit Lounge (+400 k: Pergola mit Sofas, Liegen am Steg) → Luxus-Bootshaus (+2,5 Mio:
+  Motoryacht vor dem Stegkopf, Whirlpool, Fahne, Steglichter). Stegkopf nur nach **links** (L), die Ausfahrt des Sportboots
+  rechts vom Steg bleibt frei – vorher fuhr es durch den T-Kopf; die Yacht liegt links davon (gemessen 1,8 m Luft), die Runde
+  beginnt erst 24 m draußen. Sportboot in Weltkoordinaten außerhalb der gebündelten Gruppe: legt nach 40–120 s (Echtzeit, Pause stoppt) ab und fährt eine
+  Runde auf einem Kreis, der ganz im offenen Wasser liegt (`planTrip`, einmal aus dem Tiefenraster); ohne Platz bleibt es liegen.
+- **Spielbank** (`casino`, Freizeit, privat, Ware `game` über `ATTRACTIONS`, +0,1·Anteil Freizeit, Modell `Casino.tsx`): Karte
+  „Roulette spielen“ → `RoulettePanel` (europäisch, `roulette.ts`, Einsatz vom Privatkonto, Zahl 35:1, Dutzend 2:1, einfache
+  Chancen 1:1). `playRoulette` bucht sofort, das Panel enthüllt die Zahl erst nach der Kugel (kein Ticker, Verlauf/Konto verzögert).
+- **Einbindung:** `applyMayor` im Store-`tick` nach der Bahn (gilt auch für `tickAsync`): Gehalt und erlassene Steuer gehen von
+  `balance` ab, `budget.mayor` = Finanzamt-Zeile „Bürgermeistergehalt“, `budget.favours` ist schon aus `businessTax` heraus.
+  `economy.mayor` → Stimmungsfaktor in `moodFactors`.
+- **Villa** (`villa`, einmal pro Stadt, öffentlich, `ROADLESS_KINDS`, `MAX_UNEVEN` ∞, festes Grundstück 56 × 48 für alle Stufen):
+  Bürgermeistervilla / Luxusvilla / Traumvilla (150 k / +400 k / +1 Mio €) – **bezahlt vom Privatkonto** (`placeBuilding`,
+  `upgrade`, Geist in BuildingTool, Baukarte, Gebäudekarte lesen dann `mayor.account`; Rückgängig erstattet über `villaValue`).
+  Modell aus Kenney-Teilen: Haupthaus `building-type-p` (einziges zweigeschossiges Flachdach im Suburban-Kit, gemessen über
+  waagerechte Dachflächen; `e` hat ein Satteldach), Bungalow/Poolhaus `q`, Sonnenschirme (Commercial), Zypressen/Eichen (Nature,
+  Laub umgefärbt), Sportwagen + Luxus-SUV (Car-Kit, `cloneScaled` je Achse); Pool, Whirlpool, Garage, Rosengarten mit Hecken,
+  Brunnen und Rosenbogen, Prunkzaun (Steinpfeiler, Eisenstäbe, Goldkappen ab Stufe 2, Goldspitzen Stufe 3), Tor mit Laternen.
+  Am Berg: Pad mit `reach` 30 (useProfiles) + Natursteinsockel 14 m tief. **Höhe = Vorderkante** (`buildingGround` nimmt für
+  die Villa nur `frontSamples`): mit dem Mittel des Grundstücks stand sie am Hang ~4 m über der Straße (Nutzer-Bug).
+
+## Sound (`components/city/sound/engine.ts`, `SoundDirector.tsx`, Nutzerwunsch „Wirtschaftssimulator-Stil, manchmal spannend“)
+
+- Alles per Web Audio synthetisiert (keine Dateien). Singleton `sound`, startet erst nach einer Nutzergeste (`ensure()` bei
+  pointerdown/keydown). Musik generativ mit Vorausplanung (16tel, 50-ms-Takt, `LOOKAHEAD`): ruhig Cmaj7–Am7–Fmaj7–G6 mit Pad
+  (Hall per erzeugter Impulsantwort), Sinusbass, FM-Pluck-Arpeggio; alle 16 Takte mit 35 % ein lebhafterer Abschnitt (Shaker,
+  dichteres Arpeggio). `setIntensity` (0..1, geglättet): ab 0,5 Am–F–Dm–E, Achtelbass, Kick/Snare, schneller (82→96 BPM).
+- `SoundDirector` (in `Hud`): Klick auf jeden Button, Bauen/Abriss (History wächst), Ausbau, Notruf, Angebot, Geld aus Deals,
+  Skandal/Haft; Intensität: Haft 1, offener Notruf 0,85, Skandal 0,8, betreuter Einsatz 0,6. Pause = Musik leiser. Roulette spielt
+  `spin`/`win`/`lose` selbst. Neue Ereignisse dort ergänzen.
+- Einstellungen › Ton: Musik/Effekte getrennt Aus/Leise/Mittel/Laut (`useSoundSettings`, localStorage `citypower.sound`, nach
+  dem Mount gelesen). Dev: `__city.sound.play("cash")`, `__city.sound.setIntensity(1)`.
+
+## Zeitung „Citypower Rundschau“ (`lib/city/news.ts`, `NewspaperPanel.tsx`, `NewspaperHouse.tsx`, Nutzerwunsch)
+
+- Gebäude `newspaper` „Zeitungsverlag“ (Wirtschaft › Freizeit & Medien, privat, einmal pro Stadt): verkauft Zeitungen (Ware
+  `news` über `ATTRACTIONS`), Modell Backstein-Redaktion mit RUNDSCHAU-Schild, Druckhalle mit Sheddach, Papierrollen, Lieferwagen.
+- **Ereignisse:** Im `tick` vergleicht `collectNews` den Stand mit dem letzten Takt (`newsSnapshot`, Modulvariable `lastNews`,
+  nach `loadGame`/`newWorld` null – sonst wären alle Gebäude „neu“): neue/ausgebaute/abgerissene Gebäude (ohne Häuser), Ruinen,
+  Unfälle/Brände/Rettungen, Skandal, Haft, Entlassung, Rücküberweisung, Gehaltserhöhung über „angemessen“, Einwohner-Meilensteine.
+  `newsLog` hält 2 Spieltage.
+- **Ausgaben** (`newspapers`, neueste zuerst, max. 10, im Spielstand): steht ein angeschlossener Verlag, erscheint sofort die
+  Erstausgabe, danach jeden Spieltag eine (`makeEdition(since, …)`: nur Ereignisse seit `printedAt` der letzten Ausgabe). Schlagzeile
+  = wichtigstes Ereignis (`score`), dazu feste Rubriken Wirtschaft, Umfrage (Stimmung + größte Beschwerde), Börse (mit Börse) und
+  Recherche (Gerüchte ab Verdacht 35, Schutzgeld, verdächtig erfolgreiche Waschanlage), Anzeigen der vorhandenen Betriebe.
+  `day` = Spieltag wie im HUD (1-basiert). Texte aus Vorlagen, je Tag deterministisch variiert.
+- Lesen: Knopf „Zeitung“ oben rechts (roter Punkt = ungelesen, `newsRead`) oder Karte „Zeitung lesen“ → Panel `newspaper`
+  (Zeitungsseite mit Serifenschrift, zwei Spalten, Blättern). Neue Ausgabe: Ticker-Meldung + Sound `paper`.
+
+## Bahn: Bahnhöfe, Stellwerk, Züge (`lib/city/railway.ts`, `train-graph.ts`, `Trains.tsx`, `RailwayBuildings.tsx`)
+
+- Nutzerwunsch mit Kenney **Train Kit** (CC0, `public/models/trains/`, Auswahl von 13 Modellen). Das Kit hat keine
+  Bahnhofsgebäude → Bahnhof/Stellwerk aus Grundformen im Kenney-Look (`RailwayBuildings.tsx`).
+- `trainstation` (Haltepunkt / Bahnhof / Hauptbahnhof, 64 × 20, fester Grundriss, nur Modell wächst: Bahnsteig + Dach →
+  Backstein-Empfangsgebäude → Sandstein mit Uhrturm und gläserner Bahnhofshalle) und `traindepot` „Stellwerk“
+  (Stellwerk / Betriebshof / Bahnbetriebswerk, 52 × 24, Abstellgleise = `LEVELS`-Faktor 2/4/8). Beide `ROADLESS_KINDS`
+  (hängen am Gleis, nicht an der Straße), öffentlich. **Andocken** in `planBuilding` wie Hafen am Kanal: nächstes Gleis
+  ≤ 45 m (`nearestTrack`), Rückseite zum Gleis mit `RAIL_SETBACK`; ohne Gleis Problem. Bahnsteig ragt 2,2 m über das
+  Grundstück zum Gleis (`PLATFORM_REACH`). `railOf(b)` findet das Gleis an der Rückseite, `railNetworks` = über gemeinsame
+  Punkte verbundene Gleise.
+- **Züge** (`trains` im Store/Spielstand, `buyTrain`/`sellTrain`, Kauf in der Stellwerk-Karte `DepotSection`): `TRAIN_TYPES`
+  Regionalzug (70 Fahrgäste/min), Schnellzug (160), Güterzug (90 Fracht/min). Laufen nur, wenn im Gleisnetz des Stellwerks
+  ≥ 2 Bahnhöfe stehen. **Geld (`railEconomy`, im Store nach `simulate` eingerechnet):** Fahrgäste = Einwohner im
+  `STATION_RADIUS` (je Haus der nächste Bahnhof) × 0,01/min, gedeckelt durch `STATION_CAPACITY` × Stufe und Zugkapazität,
+  × `FARE` 4 €; Fracht = Industrie-Arbeitsplätze im Umkreis × 0,05 × `FREIGHT_RATE` 7 €; Unterhalt je Zug
+  (`services.traindepot`). `budget.rail` („Bahn“ im Finanzamt), `transit` → Zuzug ×(0,97 + 0,06·transit), Stimmung
+  „Bahnanschluss“ (nur wenn Bahnhöfe existieren).
+- **Fahrt (`Trains.tsx`):** Gleisgraph `buildRailGraph` im Format des Spurgraphen (Doppelgleis rechts +2,25 m), Routen mit
+  `routeEdges`. Pendelfolge über die Bahnhöfe in Linienreihenfolge (Hauptachse der Bahnhofspunkte), Halt mit Zugmitte am
+  Bahnsteig, 12 s, an Endpunkten Richtungswechsel als Wendezug (`twinOf`, Wagen bleiben, `flip`). Beim Doppelgleis wechselt der
+  Zug auf den letzten/ersten 90 m (`SWITCH`) aufs Bahnsteiggleis (`endLane`/`startLane`). Modelle je Achse skaliert
+  (Wagen 19 m, Lok 16 m), Kenney-Fronten schauen nach −z (`MODEL_YAW` π), Fenster leuchten nachts. Züge können sich auf
+  eingleisigen Strecken durchdringen (keine Blockabstände) – offen.
+
+## Baumenü (`Drawer` in Hud.tsx, Nutzerwunsch „bei Fabriken wird es eng“)
+
+- Große Kategorien haben Unterreiter (`grouped(...)`: Versorgung, Wirtschaft, Industrie), Karten liegen in einem Raster
+  (max. 6 Spalten, scrollt vertikal) statt einer langen Zeile, Suchfeld durchsucht alle Kategorien (Titel + Beschreibung,
+  Tasten gehen nicht an die Spiel-Hotkeys). Neue Gebäude in die passende Gruppe eintragen.
+
+## Tag und Nacht (`lib/city/daylight.ts`, `Sky.tsx`, `Sun.tsx`)
+
+- Spieluhr `gameMinutes` steuert alles: `daylightAt(minutes)` liefert Himmelsmischung, Lichtrichtung/-farbe/-stärke,
+  HDRI-Stärke (`scene.environmentIntensity` 0,06–0,7), Dunstfarbe (Fog) und Laternenglühen (`setLampGlow`, gemeinsames
+  `LAMP_HEAD`-Material in Roads.tsx). Sonne 6–20 Uhr auf einem Bogen (Ost → Süd 60° → West), tief orange; nachts
+  blauer Mond aus fester Richtung (0,35), Schatten bleiben.
+- Himmel = Kuppel mit eigenem Shader (`Sky.tsx`): zwei Kenney-Panoramen (`public/sky/skybox-{day,morning,night}.jpg`,
+  equirektangular 2048 px, CC0) gemischt: Nacht → Morgen (4:30–5:30) → Tag (7–8:30) → Morgen als Abendrot (18–19:12)
+  → Nacht (20–21). Kuppel folgt der Kamera, immer auf der Fernebene; das HDRI ist nur noch Lichtquelle (kein
+  `background`). Ein Spieltag = 24 Echtminuten bei Tempo 1.
+- **Nachtlichter (`lib/city/night.ts` = Uniform `NIGHT`, `components/city/nightGlow.ts`):** `windowGlow(material, "kit"|"slate")`
+  lässt Fensterglas-Texel (Kenney-Atlas hellblau `#d0e8ff…#9cbfec`, klassische Fassade Schiefer `#3b4a5a`) in ~40 % der
+  Fenster warm leuchten – welche, bestimmt ein Hash der Weltposition (Zelle ≈ 1,4 m), sie gehen gestaffelt an. Hängt an
+  `kitMaterial` (alle Kit-Gebäude) und am klassischen `wall`-Material. `signGlow` lässt Schilder leuchten (Bank: Geldschein auf
+  dem Dach, BANK-Schild, klassisches `signBank`). Autos: Scheinwerfer/Rücklichter (Instanz-Boxen, toneMapped false) und ein
+  additiver Lichtkegel auf der Straße (`drawCarLights` in Traffic.tsx), nur bei `NIGHT > 0,05`. Weitere `onBeforeCompile`-
+  Materialien per `chain` anhängen (verkettet vorhandene Hooks und `customProgramCacheKey`).
+- **Flughafen nachts (`AirfieldLights` in Airport.tsx):** weiße Bahnrandfeuer (alle 30 m), grüne Schwelle bei −x (Anflug),
+  rote bei +x, blaue Rollwegfeuer (alle 20 m), Flutlichtmasten am Vorfeld mit additiven Lichtkreisen, Terminal-/Tower-/
+  Hotelfenster per `windowGlow`, rotes Hindernisfeuer am Tower, Flugzeuge mit Positionslichtern (rot links = −z, grün
+  rechts), Blitzern und Beacon (blinken auch tagsüber). Lampen = gemergte Boxen, Materialien `LIGHT` je Farbe, Farbe pro
+  Bild aus `NIGHT` (`updateLamps`): tagsüber graue Leuchtkörper.
+
 ## Versorgungsbereich Wasser (`WaterCoverage.tsx`)
 
 - Bei gewähltem Wasserwerk: grün-transparente Bänder über alle Wege seines Straßennetzes
@@ -785,7 +1033,9 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
 
 ## Admin-Werkzeuge
 
-- Knopf **🔧 Admin** oben rechts (`AdminMenu` in `Hud.tsx`): Geld hinzufügen (10 k / 100 k / 1 Mio €).
+- Knopf **Einstellungen** oben rechts (`AdminMenu` in `Hud.tsx`, Nutzerwunsch: vorher „Admin“): Geld hinzufügen
+  (10 k / 100 k / 1 Mio €), Hausmodelle, Wetter. Menüs oben rechts klappen absolut unter ihrem Knopf auf (verschieben
+  nichts). Keine Text-Symbole (▲▼▸ →) in der Oberfläche – Glyphen aus `ICONS` in Hud.tsx (`trendUp`, `chevronDown` …).
 - Sichtbarkeit nur über `useIsAdmin()` in `lib/city/admin.ts` – aktuell immer `true`,
   später mit echtem Admin-Konto (Rolle aus der Login-Session) verbinden.
 - Im Browser-Test alternativ `__city.store.getState().cheatMoney(n)`.
@@ -830,6 +1080,9 @@ Bei neuen Bauelementen immer prüfen: Was passiert daneben, darüber, am Ende, a
   „Starter Kit City Builder“ (aus der Colormap an den UVs der Kacheln gelesen): Rasen `#37a076` + Büschel `#5ac487` (im Spiel 7 % dunkler: `#33956e`/`#53b67d`, Nutzerwunsch),
   Platten `#81869c` + Fugen `#6a6f86`. Gelände-Shader (Büschel als Rausch-Flecken), Gärten, Fabrik- und Ladenhöfe
   (`FactoryYard`, Läden ohne Zaun), Rathausgarten.
+- **Dämme und Bauwerke im Pack-Stil:** `kenneyable(material, key, hex)` hängt jedes Fotomaterial an den Uniform von
+  `setRoadPack` – `EMBANKMENT_MATERIAL` (Dammgras → `#33956e` wie der Boden) und `STRUCTURE_CONCRETE` (Brücken, Pfeiler,
+  Widerlager → `#c9ccd8`). Vorher hatten Straßenerhöhungen noch das Fotogras (Nutzer-Bug).
 - **Straßen im Pack-Stil (`KENNEY_ROAD`/`setRoadPack` in materials.ts):** Kenneys Straßenkacheln passen nicht auf freie
   Kurven → Farben der Kacheln (Starter Kit, aus der Colormap gelesen) statt Fotos: Asphalt `#36363a`, Markierung `#c3cae6`,
   Bordstein `#6d738a`, Gehweg `#81869c`; Normal-Map aus. Ein gemeinsamer Uniform an allen `ROAD_MATERIALS` (auch die

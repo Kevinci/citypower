@@ -1,5 +1,5 @@
 import type * as THREE from "three";
-import { occupant, waterAt } from "./adjacency";
+import { pathsNear, occupant, waterAt } from "./adjacency";
 import type { Junction } from "./network";
 import { band, buildFrames, MeshBuilder, tube, type Frame } from "./road-geometry";
 import { naturalDepthGrid, sampleDepth, type DepthGrid } from "./terrain";
@@ -114,6 +114,14 @@ export function buildRoadBarriers(
 ): THREE.BufferGeometry | null {
   const frames = buildFrames(road.points, road.kind, profile);
   if (frames.length < 2) return null;
+  // Only paths and junctions near this road matter (every frame is tested against them).
+  others = pathsNear(road.points, others, 60);
+  {
+    const xs = road.points.map((p) => p.x);
+    const zs = road.points.map((p) => p.z);
+    const [x0, x1, z0, z1] = [Math.min(...xs) - 60, Math.max(...xs) + 60, Math.min(...zs) - 60, Math.max(...zs) + 60];
+    junctions = junctions.filter((j) => j.x >= x0 - j.radius && j.x <= x1 + j.radius && j.z >= z0 - j.radius && j.z <= z1 + j.radius);
+  }
   const style = styleOf(road);
   const outer = OUTER_HALF_WIDTH[road.kind];
   const offset = barrierOffset(road);

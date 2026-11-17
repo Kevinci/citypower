@@ -9,6 +9,7 @@ import {
   GOOD_LABEL,
   IMPORT_COST,
   IMPORT_GOODS,
+  levelFactor,
   PRICE,
   SHIP_PRICE_FACTOR,
   storedTotal,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/city/economy";
 import { cargoValue, FREIGHT_PER_UNIT, HARBOUR_BERTHS, harbourSales, LOAD_MINUTES, SHIP_RESALE, SHIP_STATE_LABEL, SHIP_TYPES, shipType } from "@/lib/city/shipping";
 import { useCity } from "@/lib/city/store";
+import { depotSlots, FARE as RAIL_FARE, FREIGHT_RATE, STATION_CAPACITY, STATION_RADIUS, TRAIN_RESALE, TRAIN_TYPES, trainType } from "@/lib/city/railway";
 import { GameIcon } from "./GameIcon";
 import { euro, Pill } from "./Hud";
 
@@ -330,5 +332,93 @@ export function AirportSection({ building }: { building: Building }) {
         )}
       </div>
     </>
+  );
+}
+
+/** Station: reach, passengers and freight, and what keeps trains from stopping here. */
+export function StationSection({ building }: { building: Building }) {
+  const st = useCity((s) => s.economy?.rail?.stations[building.id]);
+  if (!st) return null;
+  return (
+    <div className="border-t border-black/10 py-1">
+      <Title>Bahnhof</Title>
+      {st.problem && <div className="px-3 py-[2px] text-[11px] font-semibold text-[#c0392b]">{st.problem}</div>}
+      <Line label="Umkreis" value={`${STATION_RADIUS[building.level]} m`} />
+      <Line label="Einwohner im Umkreis" value={String(Math.round(st.residents))} />
+      <Line label="Fahrgäste" value={`${st.passengers.toFixed(1)} /min · ${euro(st.passengers * RAIL_FARE)}/min`} />
+      <Line label="Industrie-Arbeitsplätze im Umkreis" value={String(Math.round(st.jobs))} />
+      <Line label="Fracht" value={`${st.freight.toFixed(1)} /min · ${euro(st.freight * FREIGHT_RATE)}/min`} />
+      <div className="px-3 py-[3px] text-[10px] text-[#7a8794]">
+        Höchstens {Math.round(STATION_CAPACITY * levelFactor(building))} Fahrgäste/min. Bahnanschluss bringt etwas mehr Zuzug.
+      </div>
+    </div>
+  );
+}
+
+function Line({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between px-3 py-[2px] text-[11px]">
+      <span className="text-[#1d5f86]">{label}</span>
+      <span className="font-mono text-[#2c3640]">{value}</span>
+    </div>
+  );
+}
+
+/** Signal box: its trains (sell) and the train shop. */
+export function DepotSection({ building }: { building: Building }) {
+  const trains = useCity((s) => s.trains);
+  const money = useCity((s) => s.money);
+  const buyTrain = useCity((s) => s.buyTrain);
+  const sellTrain = useCity((s) => s.sellTrain);
+  const st = useCity((s) => s.economy?.rail?.depots[building.id]);
+  const fleet = trains.filter((t) => t.depot === building.id);
+  const slots = depotSlots(building);
+  return (
+    <div className="border-t border-black/10 py-1">
+      <Title>{`Züge · ${fleet.length} / ${slots} Abstellgleise`}</Title>
+      {st?.problem && <div className="px-3 py-[2px] text-[11px] font-semibold text-[#c0392b]">{st.problem}</div>}
+      {st && (
+        <>
+          <Line label="Bahnhöfe im Gleisnetz" value={String(st.stations)} />
+          <Line label="Einnahmen der Züge" value={`${euro(st.revenue)}/min`} />
+        </>
+      )}
+      {fleet.map((train) => {
+        const type = trainType(train.type);
+        return (
+          <div key={train.id} className="mx-3 my-1 flex items-center gap-1.5 rounded-lg border border-black/10 bg-white/70 px-2.5 py-1.5 text-[11px]">
+            <GameIcon name="train" size={16} />
+            <span className="flex-1 font-semibold text-[#1d2a35]">
+              „{train.name}“ <span className="font-normal text-[#7a8794]">{type.label} · {euro(type.upkeep)}/min</span>
+            </span>
+            <Pill onClick={() => sellTrain(train.id)} title={`Verkaufen für ${euro(type.cost * TRAIN_RESALE)}`}>
+              Verkaufen
+            </Pill>
+          </div>
+        );
+      })}
+      <Title>Zug kaufen</Title>
+      {TRAIN_TYPES.map((t) => {
+        const full = fleet.length >= slots;
+        return (
+          <div key={t.id} className="flex items-center gap-2 px-3 py-[3px] text-[11px]">
+            <div className="flex-1">
+              <div className="font-semibold text-[#1d2a35]">{t.label}</div>
+              <div className="text-[10px] text-[#7a8794]">
+                {t.freight ? `${t.capacity} Einheiten Fracht/min` : `${t.capacity} Fahrgäste/min`} · {Math.round(t.speed * 3.6)} km/h · {euro(t.upkeep)}/min
+              </div>
+            </div>
+            <Pill
+              tone="go"
+              disabled={full || money < t.cost}
+              onClick={() => buyTrain(building.id, t.id)}
+              title={full ? "Alle Abstellgleise belegt – Stellwerk ausbauen" : money < t.cost ? "Nicht genug Geld" : "Kaufen"}
+            >
+              {euro(t.cost)}
+            </Pill>
+          </div>
+        );
+      })}
+    </div>
   );
 }

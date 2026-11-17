@@ -2,7 +2,7 @@
 
 import { Environment, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Bloom, EffectComposer, HueSaturation, SMAA, ToneMapping, Vignette } from "@react-three/postprocessing";
+import { Bloom, EffectComposer, HueSaturation, SMAA, ToneMapping, Vignette, TiltShift2 } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import { Suspense, useRef } from "react";
 import * as THREE from "three";
@@ -13,6 +13,7 @@ import { BuildingTool } from "./BuildingTool";
 import { Buildings } from "./Buildings";
 import { Ships } from "./Ships";
 import { Sun } from "./Sun";
+import { Sky } from "./Sky";
 import { Canals } from "./Canals";
 import { DevHandle } from "./DevHandle";
 import { People } from "./People";
@@ -22,6 +23,8 @@ import { SupplyLinks } from "./SupplyLinks";
 import { RoadBuilder } from "./RoadBuilder";
 import { Roads } from "./Roads";
 import { Traffic } from "./Traffic";
+import { Fires } from "./Fires";
+import { Trains } from "./Trains";
 import { Trees } from "./Trees";
 import { Water } from "./Water";
 import { WaterCoverage } from "./WaterCoverage";
@@ -29,9 +32,12 @@ import { RoadNetworks } from "./RoadNetworks";
 import { JobCentreArea } from "./JobCentreArea";
 import { BuildGrid, Ground } from "./World";
 import { WorldEdge } from "./WorldEdge";
+import {Rain} from "@/components/weather/Rain";
+import { useCity } from "@/lib/city/store";
+import { Snow } from "@/components/weather/Snow";
 
-/** Poly Haven "Kloofendal 48d Partly Cloudy (Pure Sky)", CC0. */
-/** Haze colour (sky near the horizon) and its range in metres. */
+/** Poly Haven "Kloofendal 48d Partly Cloudy (Pure Sky)", CC0: sky light only; the visible sky is the Kenney dome (Sky.tsx). */
+/** Haze colour (sky near the horizon, by day – Sky.tsx tints it with the clock) and its range in metres. */
 const HAZE = "#c6d3df";
 const HAZE_NEAR = 450;
 const HAZE_FAR = 3800;
@@ -48,6 +54,8 @@ function ReadySignal({ onReady }: { onReady?: () => void }) {
 }
 
 export default function CityScene({ onReady }: { onReady?: () => void }) {
+  const showRain = useCity((s) => s.showRain);
+  const showSnow = useCity((s) => s.showSnow);
   return (
     <Canvas
       shadows
@@ -63,8 +71,27 @@ export default function CityScene({ onReady }: { onReady?: () => void }) {
       {/* Aerial perspective, not weather: only far land fades slightly into the sky colour. */}
       <fog attach="fog" args={[HAZE, HAZE_NEAR, HAZE_FAR]} />
 
+      {showRain && (
+          <Rain
+              count={3500}
+              speed={28}
+              wind={2.5}
+              opacity={0.55}
+          />
+      )}
+
+      {showSnow && (
+          <Snow
+              count={3800}
+              speed={2.5}
+              wind={0.7}
+              opacity={0.8}
+          />
+      )}
+
       <Suspense fallback={null}>
-        <Environment files={SKY_HDRI} background environmentIntensity={0.7} />
+        <Environment files={SKY_HDRI} environmentIntensity={0.7} />
+        <Sky />
 
         <Sun />
 
@@ -86,6 +113,8 @@ export default function CityScene({ onReady }: { onReady?: () => void }) {
         <Rails />
         <Canals />
         <Traffic />
+        <Fires />
+        <Trains />
         <People />
         <RoadBuilder />
 
@@ -93,6 +122,13 @@ export default function CityScene({ onReady }: { onReady?: () => void }) {
         {/* 4× MSAA on the scene buffer smooths thin markings and rails; SMAA cleans up the rest. */}
         <EffectComposer multisampling={4}>
           <Bloom intensity={0.25} luminanceThreshold={0.9} mipmapBlur />
+          {showRain && (
+          <TiltShift2
+              blur={0.25}
+              taper={1.8}
+              samples={6}
+          />
+              )}
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           {/* Colour grade: ACES flattens saturation a little; give some back (merged into the same pass). */}
           <HueSaturation saturation={0.06} />

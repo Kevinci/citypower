@@ -10,9 +10,12 @@ import { salesRate } from "@/lib/city/shipping";
 import { treasuryReport } from "@/lib/city/treasury";
 import { moodFactors, moodLabel, moodOf } from "@/lib/city/wellbeing";
 import { GameIcon } from "./GameIcon";
-import { euro, Pill } from "./Hud";
+import { euro, Icon, Pill } from "./Hud";
 import { Bar, Frame, Heading, Line, pct, Trend } from "./PanelParts";
 import { TaxOfficePanel } from "./TaxOfficePanel";
+import { MayorPanel } from "./MayorPanel";
+import { RoulettePanel } from "./RoulettePanel";
+import { NewspaperPanel } from "./NewspaperPanel";
 
 /*
  * Big HUD panels opened from a building card: the bank (finances and loans), the town
@@ -166,7 +169,8 @@ function GoldVault() {
           {exchange ? (
             <button className="font-mono text-[11px] underline-offset-2 hover:underline" onClick={() => setPanel("exchange")} title="Börse öffnen">
               <span className={change >= 0 ? "text-[#2c8f4e]" : "text-[#c0392b]"}>
-                {change >= 0 ? "▲" : "▼"} {pct(Math.abs(change))} heute
+                <Icon name={change >= 0 ? "trendUp" : "trendDown"} className="mr-0.5 inline h-3 w-3 align-[-1px]" />
+                {pct(Math.abs(change))} heute
               </span>
             </button>
           ) : (
@@ -269,7 +273,8 @@ function ExchangePanel() {
         <div className="flex items-baseline gap-3">
           <div className="text-3xl font-semibold tracking-tight text-[#1d2a35]">{euro(day.now)}</div>
           <div className={`font-mono text-sm font-semibold ${up ? "text-[#2c8f4e]" : "text-[#c0392b]"}`}>
-            {up ? "▲ +" : "▼ −"}
+            <Icon name={up ? "trendUp" : "trendDown"} className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
+            {up ? "+" : "−"}
             {euro(Math.abs(day.now - day.open))} ({pct(Math.abs(change))})
           </div>
         </div>
@@ -454,5 +459,8 @@ export function CityPanels() {
   if (open === "townhall") return <TownHallPanel />;
   if (open === "taxoffice") return <TaxOfficePanel />;
   if (open === "exchange") return <ExchangePanel />;
+  if (open === "mayor") return <MayorPanel />;
+  if (open === "casino") return <RoulettePanel />;
+  if (open === "newspaper") return <NewspaperPanel />;
   return null;
 }

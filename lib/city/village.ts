@@ -1,4 +1,4 @@
-import type { Building } from "./economy";
+import { sizeOf, type Building } from "./economy";
 import { connectRoads } from "./network";
 import { mulberry32 } from "./random";
 import { OUTER_HALF_WIDTH, type Road } from "./types";
@@ -26,8 +26,20 @@ export function generateVillage(seed: number): { roads: Road[]; buildings: Build
   const wellX = -(46 + Math.floor(rnd() * 3) * 20);
   add({ kind: "waterworks", x: wellX, z: setback + 9, rot: 0, level: 1, variant: 0 });
 
+
+  // Town hall and bank on the north-west side of the main street (the church takes the
+  // north-east, the well the south-west), front right at the street like every building
+  // placed by the player – otherwise they have no road access and stay shut down.
+  const front = (kind: "townhall" | "bank") => setback + sizeOf({ kind })[1] / 2;
+  add({ kind: "townhall", x: -112, z: -front("townhall"), rot: Math.PI, level: 1, variant: 0 });
+  add({ kind: "bank", x: -74, z: -front("bank"), rot: Math.PI, level: 1, variant: 0 });
+
+  // A house plot is free if it keeps clear of every building's footprint.
   const free = (x: number, z: number) =>
-    buildings.every((b) => Math.abs(b.x - x) > 14 || Math.abs(b.z - z) > (b.kind === "church" ? 18 : 12));
+    buildings.every((b) => {
+      const [w, d] = sizeOf(b);
+      return Math.abs(b.x - x) > w / 2 + 6 || Math.abs(b.z - z) > d / 2 + 6;
+    });
   const houseZ = setback + 4;
   // Houses along the main street (front to the street on both sides).
   for (const x of [-130, -110, -90, -70, -50, -30, 30, 50, 70, 90, 110, 130]) {

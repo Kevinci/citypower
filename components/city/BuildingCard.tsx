@@ -1,6 +1,7 @@
 import { Html } from "@react-three/drei";
 import { useMemo, type ReactNode } from "react";
 import {
+  MAYOR_PRIVATE,
   BUILDINGS,
   GOOD_ICON,
   GOOD_LABEL,
@@ -13,6 +14,12 @@ import {
   SCHOOL_CAPACITY,
   RECREATION_RADIUS,
   ROADLESS_KINDS,
+  SERVICE_RADIUS,
+  vehiclesOf,
+  AMBULANCE_RADIUS,
+  FIRE_LEVY,
+  MISSION_FEE,
+  POLICE_FINES,
   TRADER_CAPACITY,
   AIRPORT_PASSENGERS,
   AIR_CARGO,
@@ -52,10 +59,12 @@ import {
   TRANSFORMER_RADIUS,
 } from "@/lib/city/power";
 import { useCity, type CityPanel } from "@/lib/city/store";
+import { busyAmbulances, busyVehicles, INCIDENT_LABEL } from "@/lib/city/incidents";
 import { GameIcon } from "./GameIcon";
-import { AirportSection, HarbourSection, TraderSection, WarehouseSection } from "./LogisticsCard";
+import { AirportSection, DepotSection, HarbourSection, StationSection, TraderSection, WarehouseSection } from "./LogisticsCard";
 import { euro, Icon, panel, Pill } from "./Hud";
 import { useDepthGrid } from "./useWater";
+import { LaunderingSection, ProtectionSection } from "./MayorPanel";
 
 /** Height of the card's anchor above the building's ground. */
 const PANEL_BUTTON: Record<CityPanel, string> = {
@@ -63,6 +72,9 @@ const PANEL_BUTTON: Record<CityPanel, string> = {
   townhall: "Analysen, Bürger & Baugenehmigungen",
   taxoffice: "Steuern & Haushalt öffnen",
   exchange: "Kurse öffnen",
+  mayor: "Privatkonto öffnen",
+  casino: "Roulette spielen",
+  newspaper: "Zeitung lesen",
 };
 
 /** Card height above a house per level (blocks and towers are tall). */
@@ -87,6 +99,17 @@ const ANCHOR: Record<string, number> = {
   bakery: 13,
   waterworks: 16,
   hospital: 19,
+  ruin: 8,
+  trainstation: 16,
+  prison: 18,
+  villa: 20,
+  casino: 22,
+  pizzeria: 12,
+  boathouse: 12,
+  newspaper: 16,
+  traindepot: 14,
+  police: 16,
+  firestation: 22,
   school: 20,
   steelworks: 40,
   sawmill: 18,
@@ -257,7 +280,12 @@ export function BuildingCard() {
   const building = useCity((s) => s.buildings.find((b) => b.id === s.selected));
   const buildings = useCity((s) => s.buildings);
   const economy = useCity((s) => s.economy);
-  const money = useCity((s) => s.money);
+  const incidents = useCity((s) => s.incidents);
+  // The villa is paid from the mayor's private account.
+  const money = useCity((s) => {
+    const kind = s.buildings.find((b) => b.id === s.selected)?.kind;
+    return kind && MAYOR_PRIVATE.includes(kind) ? s.mayor.account : s.money;
+  });
   const upgrade = useCity((s) => s.upgrade);
   const autoCable = useCity((s) => s.autoCable);
   const demolish = useCity((s) => s.demolish);
@@ -281,7 +309,8 @@ export function BuildingCard() {
   const spec = BUILDINGS[building.kind];
   const recipe = RECIPES[building.kind];
   const title = levelName(building);
-  const panelKind = building.kind in PANEL_BUTTON ? (building.kind as CityPanel) : null;
+  // The villa opens the mayor's private side (paid from there).
+  const panelKind = MAYOR_PRIVATE.includes(building.kind) ? "mayor" : building.kind in PANEL_BUTTON ? (building.kind as CityPanel) : null;
   const nextCost = spec.upgrade?.[building.level + 1];
   const canUpgrade = !!spec.upgrade && building.level < spec.upgrade.length - 1 && nextCost !== undefined;
   const upgradeText =
@@ -604,6 +633,35 @@ export function BuildingCard() {
               </div>
             </Section>
           )}
+          {economy && (building.kind === "police" || building.kind === "firestation") && (
+            <Section title="Einsätze">
+              <Row label="Umkreis" value={`${SERVICE_RADIUS[building.kind]![building.level]} m`} />
+              <Row
+                label={building.kind === "police" ? "Streifenwagen im Einsatz" : "Löschfahrzeuge im Einsatz"}
+                value={`${busyVehicles(incidents, building.id)} von ${vehiclesOf(building)}`}
+              />
+              <Row label="Einwohner im Umkreis" value={fmt(economy.recreation[building.id] ?? 0)} />
+              <Row
+                label={building.kind === "police" ? "Stadt mit Polizei in der Nähe" : "Stadt mit Feuerwehr in der Nähe"}
+                value={`${Math.round((building.kind === "police" ? economy.safety : economy.fireCover) * 100)} %`}
+              />
+              {incidents
+                .filter((i) => i.station === building.id && !i.cleared)
+                .map((i) => (
+                  <Row key={i.id} label={INCIDENT_LABEL[i.kind]} value={i.onSite ? "abgesperrt, wird geräumt" : "Fahrzeug unterwegs"} />
+                ))}
+              <Row
+                label={building.kind === "police" ? "Bußgelder (Stadt)" : "Feuerschutzabgabe (Stadt)"}
+                value={`${fmt(economy.residents * (building.kind === "police" ? economy.safety * POLICE_FINES : economy.fireCover * FIRE_LEVY))} €/min`}
+              />
+              <Row label="Gebühr je Einsatz" value={`${(building.kind === "police" ? MISSION_FEE.accident : MISSION_FEE.fire).toLocaleString("de-DE")} €`} />
+              <div className="px-3 py-[3px] text-[10px] text-[#7a8794]">
+                {building.kind === "police"
+                  ? "Fährt mit Blaulicht zu Unfällen im Straßennetz und sperrt die Stelle ab. Ohne Polizei bleibt ein Unfall lange liegen."
+                  : "Rückt mit Blaulicht zu Hausbränden im Straßennetz aus. Ohne Feuerwache in Reichweite brennt das Haus ab."}
+              </div>
+            </Section>
+          )}
           {status && economy && building.kind === "jobcenter" && (
             <Section title="Arbeitsvermittlung">
               <Row label="Umkreis" value={`${JOBCENTRE_RADIUS[building.level]} m`} />
@@ -644,6 +702,9 @@ export function BuildingCard() {
                 unit=""
                 from={`je Krankenhaus ${HOSPITAL_CAPACITY} Einwohner`}
               />
+              <Row label="Krankenwagen im Einsatz" value={`${busyAmbulances(incidents, building.id)} von ${vehiclesOf(building)}`} />
+              <Row label="Rettungsdienst-Umkreis" value={`${AMBULANCE_RADIUS} m`} />
+              <Row label="Krankenkasse je Transport" value={`${MISSION_FEE.ambulance.toLocaleString("de-DE")} €`} />
             </Section>
           )}
           {status && economy && building.kind === "school" && (
@@ -662,6 +723,18 @@ export function BuildingCard() {
           {building.kind === "harbour" && <HarbourSection building={building} />}
           {building.kind === "trader" && <TraderSection building={building} />}
           {building.kind === "airport" && <AirportSection building={building} />}
+          {economy && building.kind === "prison" && (
+            <Section title="Justizvollzug">
+              <Row label="Haftplätze (Stadt)" value={fmt(economy.prison.places)} />
+              <Row label="Häftlinge" value={fmt(economy.prison.inmates)} />
+              <Row label="Kostenerstattung vom Land" value={`${fmt(economy.budget.justice ?? 0)} €/min`} />
+              <div className="px-3 py-[3px] text-[10px] text-[#7a8794]">
+                Braucht eine Polizeiwache im Straßennetz. Mit Gefängnis bringt die Polizei 40 % mehr Bußgelder und Sicherheit.
+              </div>
+            </Section>
+          )}
+          {building.kind === "trainstation" && <StationSection building={building} />}
+          {building.kind === "traindepot" && <DepotSection building={building} />}
           {building.kind === "house" && (
             <Section title="Haushalt">
               <Row label="Haushalte" value={String(householdsOf(building))} />
@@ -677,6 +750,8 @@ export function BuildingCard() {
           )}
 
           {status?.finance && <FinanceSection f={status.finance} workers={jobsOf(building) * (status.staffing ?? 1)} />}
+          {status?.finance && <ProtectionSection building={building.id} />}
+          <LaunderingSection building={building.id} />
           {status?.pays !== undefined && (
             <Section title="Abgaben an die Stadt">
               <Row label="Steuern und Gebühren" value={`${euro(status.pays)} / min`} />
@@ -711,7 +786,7 @@ export function BuildingCard() {
             {canUpgrade && (
               <ActionButton icon="upgrade" label="Ausbauen" onClick={() => upgrade(building.id)} disabled={money < (nextCost ?? Infinity) || !!growth?.problem} />
             )}
-            {(spec.cost > 0 || building.kind === "house") && (
+            {(spec.cost > 0 || building.kind === "house" || building.kind === "ruin") && (
               <ActionButton icon="demolish" label="Abreißen" tone="danger" onClick={() => demolish(building.id)} />
             )}
             <ActionButton icon="close" label="Schließen" onClick={() => select(null)} />

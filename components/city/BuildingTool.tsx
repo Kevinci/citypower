@@ -1,7 +1,7 @@
 import { useThree } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
-import { insideFootprint, sizeOf, type Building } from "@/lib/city/economy";
+import { insideFootprint, MAYOR_PRIVATE, sizeOf, type Building } from "@/lib/city/economy";
 import { buildingGround, planBuilding } from "@/lib/city/placement";
 import { useCity } from "@/lib/city/store";
 import { naturalDepthGrid, raycastTerrain, type DepthGrid } from "@/lib/city/terrain";
@@ -11,7 +11,7 @@ const CLICK_TOLERANCE_PX = 5;
 
 /** Rough height of a building for picking (m): houses by level, a few tall landmarks, else 14 m. */
 const HOUSE_PICK_HEIGHT = [0, 7, 10, 15, 26, 42, 70, 115];
-const PICK_HEIGHT: Partial<Record<Building["kind"], number>> = { bank: 75, townhall: 34, church: 28, powerplant: 32, airport: 8, farm: 16, sheepfarm: 8, park: 6, playground: 5 };
+const PICK_HEIGHT: Partial<Record<Building["kind"], number>> = { bank: 75, townhall: 34, church: 28, powerplant: 32, airport: 8, farm: 16, sheepfarm: 8, park: 6, playground: 5, ruin: 6, villa: 13 };
 const pickHeight = (b: Building) => (b.kind === "house" ? (HOUSE_PICK_HEIGHT[b.level] ?? 12) : (PICK_HEIGHT[b.kind] ?? 14));
 
 const local = new THREE.Ray();
@@ -67,7 +67,8 @@ export function BuildingTool() {
   const rails = useCity((s) => s.rails);
   const canals = useCity((s) => s.canals);
   const buildings = useCity((s) => s.buildings);
-  const money = useCity((s) => s.money);
+  // The villa's ghost checks the mayor's private account.
+  const money = useCity((s) => (s.placing && MAYOR_PRIVATE.includes(s.placing) ? s.mayor.account : s.money));
   const grid = useDepthGrid();
 
   useEffect(() => {

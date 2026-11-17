@@ -202,10 +202,23 @@ export const DAIRY_COAT = { Main: "#1d1c1b", Main_Light: "#f2f0ea" };
 export const BEEF_COAT = { Main: "#7a4126", Main_Light: "#c9a27a" };
 
 /** Far herds are a few pixels: not drawn at all (every animal is several skinned draw calls). */
+const NOOP = () => {};
+/**
+ * Takes a hidden figure (and its skeleton) out of three's per-frame matrix traversal, or puts it
+ * back: three visits every object each frame, visible or not.
+ */
+export function skipMatrices(o: THREE.Object3D, skip: boolean) {
+  const own = Object.prototype.hasOwnProperty.call(o, "updateMatrixWorld");
+  if (skip && !own) (o as { updateMatrixWorld: () => void }).updateMatrixWorld = NOOP;
+  else if (!skip && own) delete (o as { updateMatrixWorld?: unknown }).updateMatrixWorld;
+}
+
 function updateHerd(group: THREE.Group, animals: Animal[], area: Area, dt: number, height: (x: number, z: number) => number, camera: THREE.Vector3) {
   group.getWorldPosition(tmp);
   const d = tmp.distanceTo(camera);
   group.visible = d < FIGURE_DISTANCE;
+  // Far herds: no drawing and no matrix updates of hundreds of bones.
+  skipMatrices(group, !group.visible);
   if (group.visible) stepHerd(animals, area, dt, height, d < ANIMATE_DISTANCE);
 }
 
@@ -229,7 +242,12 @@ export function Herd({
   const style = useCity((s) => s.houseStyle);
   const actual: Species = style === "pack" && kind === "cow" ? "cowCube" : style === "pack" && kind === "pig" ? "pigCube" : kind;
   const species = useSpecies(actual);
-  const group = useMemo(() => new THREE.Group(), []);
+  // Animated: the StaticBatcher leaves the herd alone.
+  const group = useMemo(() => {
+    const g = new THREE.Group();
+    g.userData.dynamic = true;
+    return g;
+  }, []);
   const animals = useMemo(() => {
     const rnd = mulberry32(seed);
     const cube = actual !== kind;

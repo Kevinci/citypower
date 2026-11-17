@@ -365,6 +365,51 @@ function obstacleHash(paths: Path[], grid: DepthGrid, profiles: Map<string, Prof
     (cells.get(key(Math.floor(x / HASH_CELL), Math.floor(z / HASH_CELL))) ?? []).some((o) => (x - o.x) ** 2 + (z - o.z) ** 2 < o.r * o.r);
 }
 
+interface Standing {
+  list: Placement[];
+  /** Tree indices per grid cell (HASH_CELL). */
+  cells: Map<number, number[]>;
+  /** Trees on each building's plot (buildings are immutable objects). */
+  hits: WeakMap<Building, number[]>;
+}
+const cellKey = (cx: number, cz: number) => cx * 100003 + cz;
+
+function standingTrees(candidates: Placement[], paths: Path[], grid: DepthGrid, profiles: Map<string, Profile>, shaped: DepthGrid): Standing {
+  const blocked = obstacleHash(paths, grid, profiles, []);
+  const reshaped = (x: number, z: number) => shaped !== grid && Math.abs(sampleDepth(shaped, x, z) - sampleDepth(grid, x, z)) > 0.4;
+  const list = candidates.filter((p) => !blocked(p.x, p.z) && !reshaped(p.x, p.z));
+  const cells = new Map<number, number[]>();
+  list.forEach((p, i) => {
+    const k = cellKey(Math.floor(p.x / HASH_CELL), Math.floor(p.z / HASH_CELL));
+    const c = cells.get(k);
+    if (c) c.push(i);
+    else cells.set(k, [i]);
+  });
+  return { list, cells, hits: new WeakMap() };
+}
+
+/** Sorted indices (as a string key) of the standing trees that lie on a building's plot. */
+function felledBy(standing: Standing, buildings: Building[]): string {
+  const all = new Set<number>();
+  for (const b of buildings) {
+    let hit = standing.hits.get(b);
+    if (!hit) {
+      hit = [];
+      const [w, d] = sizeOf(b);
+      const r = Math.hypot(w, d) / 2 + 3;
+      for (let cx = Math.floor((b.x - r) / HASH_CELL); cx <= Math.floor((b.x + r) / HASH_CELL); cx++)
+        for (let cz = Math.floor((b.z - r) / HASH_CELL); cz <= Math.floor((b.z + r) / HASH_CELL); cz++)
+          for (const i of standing.cells.get(cellKey(cx, cz)) ?? []) {
+            const p = standing.list[i];
+            if ((p.x - b.x) ** 2 + (p.z - b.z) ** 2 < r * r) hit.push(i);
+          }
+      standing.hits.set(b, hit);
+    }
+    for (const i of hit) all.add(i);
+  }
+  return [...all].sort((a, b) => a - b).join(",");
+}
+
 /**
  * Where trees grow in the natural world (woods, mountain forests). Depends only on the
  * terrain: what is built later only removes trees, it never reshuffles the others.
@@ -604,11 +649,18 @@ export function Trees() {
   // The natural forest of this world (once per terrain).
   const candidates = useMemo(() => treeCandidates(grid), [grid]);
   const capacities = useMemo(() => VARIANTS.map((_, i) => candidates.filter((p) => p.variant === i).length), [candidates]);
+  // Trees left by roads, tracks, canals and reshaped ground (changes rarely), in a coarse grid
+  // so a building finds the trees on its plot without scanning the forest.
+  const standing = useMemo(() => standingTrees(candidates, [...roads, ...rails, ...canals], grid, profiles, shaped), [candidates, roads, rails, canals, grid, profiles, shaped]);
+  // Which of them the buildings fell. Most new houses fell none: the key (and with it the
+  // forests and their GPU buffers) then stays the same – it was a full rebuild per house.
+  const felledKey = useMemo(() => felledBy(standing, buildings), [standing, buildings]);
   const forests = useMemo(() => {
-    const blocked = obstacleHash([...roads, ...rails, ...canals], grid, profiles, buildings);
+    const felled = new Set(felledKey ? felledKey.split(",").map(Number) : []);
     const kept = VARIANTS.map(() => [] as Placement[]);
-    const reshaped = (x: number, z: number) => shaped !== grid && Math.abs(sampleDepth(shaped, x, z) - sampleDepth(grid, x, z)) > 0.4;
-    for (const p of candidates) if (!blocked(p.x, p.z) && !reshaped(p.x, p.z)) kept[p.variant].push(p);
+    standing.list.forEach((p, i) => {
+      if (!felled.has(i)) kept[p.variant].push(p);
+    });
     const position = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
@@ -626,7 +678,7 @@ export function Trees() {
       });
       return { matrices, spheres, count: list.length };
     });
-  }, [candidates, roads, rails, canals, grid, profiles, buildings, shaped]);
+  }, [standing, felledKey]);
 
   useFrame(({ clock }) => {
     windTime.value = clock.getElapsedTime();

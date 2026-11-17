@@ -63,6 +63,33 @@ export interface QueryOptions {
   margin?: number;
 }
 
+/** Bounding box of a path's control points (paths are never mutated, so it is cached). */
+const boxes = new WeakMap<Path, [number, number, number, number]>();
+function boxOf(points: Vec2[]): [number, number, number, number] {
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (const p of points) {
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.z < z0) z0 = p.z;
+    if (p.z > z1) z1 = p.z;
+  }
+  return [x0, z0, x1, z1];
+}
+
+/**
+ * The paths that come within `margin` metres of the box around `points` (by their own boxes;
+ * rounded corners stay inside the control polygon). Geometry builders test thousands of points
+ * of one road against "all paths": with this only the few paths nearby are left.
+ */
+export function pathsNear<T extends Path>(points: Vec2[], paths: T[], margin = 40): T[] {
+  const [x0, z0, x1, z1] = boxOf(points);
+  return paths.filter((p) => {
+    let b = boxes.get(p);
+    if (!b) boxes.set(p, (b = boxOf(p.points)));
+    return b[0] <= x1 + margin && b[2] >= x0 - margin && b[1] <= z1 + margin && b[3] >= z0 - margin;
+  });
+}
+
 const accepts = (path: Path, o: QueryOptions) =>
   (!o.networks || o.networks.includes(NETWORK_OF[path.kind])) && !(o.exclude && o.exclude.includes(path.id));
 

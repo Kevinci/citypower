@@ -9,7 +9,7 @@ import { mulberry32 } from "@/lib/city/random";
 import { buildFrames, cumulative, type Frame } from "@/lib/city/road-geometry";
 import { useCity } from "@/lib/city/store";
 import type { Road } from "@/lib/city/types";
-import { FIGURE_DISTANCE } from "./Animals";
+import { FIGURE_DISTANCE, skipMatrices } from "./Animals";
 import { useProfiles } from "./useProfiles";
 
 /**
@@ -133,7 +133,10 @@ interface Mover {
 /** Hides the movers beyond the current crowd size. */
 function showOnly(all: Mover[], shown: Mover[]) {
   const on = new Set(shown);
-  for (const m of all) m.object.visible = on.has(m);
+  for (const m of all) {
+    m.object.visible = on.has(m);
+    skipMatrices(m.object, !m.object.visible);
+  }
 }
 
 /**
@@ -151,6 +154,8 @@ function step(movers: Mover[], dt: number, tmp: THREE.Vector3, camera: THREE.Vec
     m.object.position.copy(tmp);
     m.object.rotation.y = yaw;
     m.object.visible = tmp.distanceTo(camera) < FIGURE_DISTANCE;
+    // Hidden figures (and their skeletons) are skipped by the per-frame matrix update.
+    skipMatrices(m.object, !m.object.visible);
     if (m.object.visible) m.mixer.update(dt * (m.speed / WALK_SPEED));
   }
 }

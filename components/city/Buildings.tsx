@@ -2,6 +2,8 @@ import { useFrame } from "@react-three/fiber";
 import { memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { flattenMap, photoMaterial, setPhotoFlat, withPhoto } from "./photoMaterial";
+import { signGlow, windowGlow } from "./nightGlow";
+import { Prison, TrainDepot, TrainStation } from "./RailwayBuildings";
 import { BUILDINGS, sizeOf, type Building } from "@/lib/city/economy";
 import { buildingGround } from "@/lib/city/placement";
 import { goldDay } from "@/lib/city/gold";
@@ -12,12 +14,18 @@ import { Airport } from "./Airport";
 import { BEEF_COAT, DAIRY_COAT, Fence, Herd, localHeight, mudMaterial, type Area } from "./Animals";
 import { Church } from "./Church";
 import { GroundShadows } from "./GroundShadows";
+import { StaticBatches } from "./StaticBatcher";
 import { Gardens, HousePack } from "./HousePack";
 import { KitContainers, RoofSolar } from "./KitProps";
 import { PACK_SPECS, PackBuilding } from "./PackBuildings";
 import { PackFarmyard, PackPigHut, PackShelter, PackTrough, packFieldMaterials } from "./FarmPack";
 import { BANK_WEALTH, PackBank, PackChurch, PackTownHall, TOWNHALL_RESIDENTS } from "./LandmarksPack";
 import { Mine, PowerPlant, Transformer } from "./PowerModels";
+import { Villa } from "./Villa";
+import { Casino } from "./Casino";
+import { Pizzeria } from "./Pizzeria";
+import { NewspaperHouse } from "./NewspaperHouse";
+import { BoathouseScene } from "./Boathouse";
 import { useDepthGrid } from "./useWater";
 
 /* ---------- procedural textures ---------- */
@@ -233,7 +241,7 @@ function createAssets() {
   return {
     box: new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
     roof,
-    wall: new THREE.MeshStandardMaterial({ map: facade, roughness: 0.9 }),
+    wall: windowGlow(new THREE.MeshStandardMaterial({ map: facade, roughness: 0.9 }), "slate"),
     plain: new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.9 }),
     towerCrown: photoMaterial({ texture: "metal_plate", tile: 2, mode: "grain", strength: 0.5, color: "#ffffff", roughness: 0.5, metalness: 0.5 }),
     roofMat: withPhoto(new THREE.MeshStandardMaterial({ map: roofTex, roughness: 0.75, side: THREE.DoubleSide }), { texture: "clay_roof_tiles_02", tile: 2.4, mode: "grain", strength: 0.75 }),
@@ -258,7 +266,7 @@ function createAssets() {
     signButcher: new THREE.MeshStandardMaterial({ map: signTexture("METZGEREI"), roughness: 0.6 }),
     signFurniture: new THREE.MeshStandardMaterial({ map: signTexture("MÖBELHAUS"), roughness: 0.6 }),
     signRestaurant: new THREE.MeshStandardMaterial({ map: signTexture("RESTAURANT"), roughness: 0.6 }),
-    signBank: new THREE.MeshStandardMaterial({ map: signTexture("BANK"), roughness: 0.6 }),
+    signBank: signGlow(new THREE.MeshStandardMaterial({ map: signTexture("BANK"), roughness: 0.6 }), 1.6),
     marble: photoMaterial({ texture: "concrete_wall_008", tile: 3, color: "#fbf7ef", roughness: 0.6 }),
     signExchange: new THREE.MeshStandardMaterial({ map: signTexture("BÖRSE", "#e9dcc2", "#3a3226", "bold 40px Georgia, serif"), roughness: 0.7 }),
     signTownhall: new THREE.MeshStandardMaterial({ map: signTexture("RATHAUS"), roughness: 0.6 }),
@@ -277,6 +285,10 @@ function createAssets() {
     signPool: new THREE.MeshStandardMaterial({ map: signTexture("SCHWIMMBAD"), roughness: 0.6 }),
     signFair: new THREE.MeshStandardMaterial({ map: signTexture("JAHRMARKT"), roughness: 0.6, emissive: "#ffcf6b", emissiveIntensity: 0.2 }),
     signJobs: new THREE.MeshStandardMaterial({ map: signTexture("ARBEITSAMT"), roughness: 0.6 }),
+    signPolice: new THREE.MeshStandardMaterial({ map: signTexture("POLIZEI", "#1f4e8c", "#ffffff", "bold 36px Arial, sans-serif"), roughness: 0.5 }),
+    signFire: new THREE.MeshStandardMaterial({ map: signTexture("FEUERWEHR", "#b4221c", "#ffffff", "bold 32px Arial, sans-serif"), roughness: 0.5 }),
+    policeStripe: new THREE.MeshStandardMaterial({ color: "#1f4e8c", roughness: 0.5 }),
+    rollerDoor: new THREE.MeshStandardMaterial({ color: "#c0272d", roughness: 0.55, metalness: 0.2 }),
     signRecycling: new THREE.MeshStandardMaterial({ map: signTexture("RECYCLING"), roughness: 0.6 }),
     signJeweller: new THREE.MeshStandardMaterial({ map: signTexture("JUWELIER", "#14181d", "#e8c45a", "italic bold 34px Georgia, serif"), roughness: 0.4, emissive: "#e8c45a", emissiveIntensity: 0.12 }),
     signSmelter: new THREE.MeshStandardMaterial({ map: signTexture("GOLDSCHMELZE", "#3a2f22", "#f2c230", "bold 28px Arial, sans-serif"), roughness: 0.6 }),
@@ -371,6 +383,8 @@ const useAssets = () => {
 
 /** Marks a building group standing at its ground height, and the instanced house walls (`GroundShadows`). */
 const GROUNDED = { base: true };
+/** Animated subtree inside a building: not merged by the StaticBatcher. */
+export const DYNAMIC = { dynamic: true };
 const CONTACT = { contact: true };
 
 /** Dimensions per house level: footprint, wall height, roof height. */
@@ -855,7 +869,7 @@ function Windmill({ x = 0 }: { x?: number }) {
       </mesh>
       <Box m={a.wood} w={5.5} d={6.5} y0={3} y1={11} />
       <Roof m={a.slate} g={a.wood} w={6.5} d={5.5} y={11} h={3.2} overhang={0.3} />
-      <group ref={sails} position={[0, 9, -3.6]}>
+      <group ref={sails} position={[0, 9, -3.6]} userData={DYNAMIC}>
         {[0, 1, 2, 3].map((i) => (
           <group key={i} rotation={[0, 0, (i * Math.PI) / 2]}>
             <mesh position={[0, 4.6, 0]} material={a.wood} castShadow>
@@ -1025,7 +1039,7 @@ export function Steelworks() {
           <cylinderGeometry args={[1.2, 1.8, 32, 12]} />
         </mesh>
       ))}
-      <group ref={smoke} position={[-24, 32, 9]}>
+      <group ref={smoke} position={[-24, 32, 9]} userData={DYNAMIC}>
         {smokeMats.map((m, i) => (
           <mesh key={i} material={m}>
             <sphereGeometry args={[1.6, 10, 8]} />
@@ -2073,7 +2087,23 @@ function drawTicker(texture: THREE.CanvasTexture, now: number, open: number) {
   g.fillText(`${now.toLocaleString("de-DE")} €`, 160, c.height / 2);
   g.fillStyle = up ? "#3ddc6a" : "#ff4d4d";
   g.textAlign = "right";
-  g.fillText(`${up ? "▲" : "▼"} ${change.toFixed(1).replace(".", ",")} %`, c.width - 18, c.height / 2);
+  const label = `${change.toFixed(1).replace(".", ",")} %`;
+  g.fillText(label, c.width - 18, c.height / 2);
+  // Trend triangle drawn as a shape (a text symbol can come out as a coloured emoji).
+  const tx = c.width - 18 - g.measureText(label).width - 26;
+  const cy = c.height / 2;
+  g.beginPath();
+  if (up) {
+    g.moveTo(tx, cy + 11);
+    g.lineTo(tx + 11, cy - 11);
+    g.lineTo(tx + 22, cy + 11);
+  } else {
+    g.moveTo(tx, cy - 11);
+    g.lineTo(tx + 11, cy + 11);
+    g.lineTo(tx + 22, cy - 11);
+  }
+  g.closePath();
+  g.fill();
   texture.needsUpdate = true;
 }
 
@@ -2729,6 +2759,45 @@ export function Playground({ level = 1 }: { level?: number }) {
  * Job centre: plastered office block with a glass entrance and sign, bike stands and a
  * forecourt; level 2 adds a wing, level 3 a taller second building.
  */
+const CHAR = new THREE.MeshStandardMaterial({ color: "#2b2725", roughness: 1 });
+const ASH = new THREE.MeshStandardMaterial({ color: "#4d4844", roughness: 1 });
+const SOOT = new THREE.MeshStandardMaterial({ color: "#5f5852", roughness: 1 });
+
+/** Burnt-out house: charred wall stumps of uneven height, no roof, ash and rubble on the plot. */
+export function Ruin() {
+  const a = useAssets();
+  // Wall pieces: [x, z, w, d, height] around an 8 × 7.5 m house.
+  const walls: [number, number, number, number, number][] = [
+    [-2.6, -3.75, 2.8, 0.3, 2.6],
+    [1.2, -3.75, 1.6, 0.3, 1.4],
+    [3.2, -3.75, 1.6, 0.3, 3.1],
+    [-4, -1.5, 0.3, 4.2, 2.2],
+    [-4, 2.4, 0.3, 2.6, 0.9],
+    [4, 0.2, 0.3, 5, 1.7],
+    [-1.5, 3.75, 4.6, 0.3, 1.3],
+    [2.8, 3.75, 2.2, 0.3, 2.4],
+  ];
+  return (
+    <group>
+      <mesh geometry={a.box} material={ASH} position={[0, 0, 0]} scale={[8.6, 0.12, 8.1]} receiveShadow />
+      {walls.map(([x, z, w, d, h], i) => (
+        <mesh key={i} geometry={a.box} material={i % 3 === 0 ? SOOT : CHAR} position={[x, 0, z]} scale={[w, h, d]} castShadow receiveShadow />
+      ))}
+      {/* Rubble heaps and a fallen beam. */}
+      {[
+        [-1, 0.5, 2.2],
+        [1.8, -1, 1.6],
+        [-2.4, 1.8, 1.3],
+      ].map(([x, z, r], i) => (
+        <mesh key={i} position={[x, 0.05, z]} material={CHAR} scale={[r, 0.5, r * 0.8]} castShadow>
+          <sphereGeometry args={[1, 7, 4, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        </mesh>
+      ))}
+      <mesh geometry={a.box} material={CHAR} position={[0.4, 0.4, 0.8]} rotation={[0, 0.6, 0.35]} scale={[5.5, 0.25, 0.25]} castShadow />
+    </group>
+  );
+}
+
 export function JobCentre({ level = 1 }: { level?: number }) {
   const a = useAssets();
   return (
@@ -2772,6 +2841,89 @@ export function JobCentre({ level = 1 }: { level?: number }) {
 }
 
 /** Tax office: four-storey office block with window bands, entrance hall, car park and bike racks. */
+/**
+ * Police station: two-storey office block with a blue band and sign, glass entrance, radio
+ * mast; level 2 adds a side wing with the garage for the patrol cars, level 3 a third floor.
+ */
+export function PoliceStation({ level = 1 }: { level?: number }) {
+  const a = useAssets();
+  const floors = level >= 3 ? 3 : 2;
+  const h = floors * 3.4;
+  return (
+    <group>
+      {/* Yard at the front where the patrol cars park. */}
+      <Box m={a.yard} w={22} d={5} y1={0.06} z={-6.2} />
+      <group position={[-3, 0, 2]}>
+        <Box m={a.hospitalFacade} w={15} d={11} y1={h} />
+        {Array.from({ length: floors }, (_, f) => (
+          <Box key={f} m={a.officeGlass} w={15.1} d={11.1} y0={f * 3.4 + 1.2} y1={f * 3.4 + 2.6} />
+        ))}
+        <Box m={a.policeStripe} w={15.2} d={11.2} y0={h - 0.5} y1={h} />
+        <Box m={a.concrete} w={15.4} d={11.4} y0={h} y1={h + 0.4} />
+        {/* Entrance with canopy and the sign above it. */}
+        <Box m={a.glass} w={4.5} d={0.3} y1={3} x={-2} z={-5.55} />
+        <Box m={a.concrete} w={6} d={1.8} y0={3.1} y1={3.35} x={-2} z={-6.2} />
+        <mesh geometry={a.box} material={a.signPolice} position={[3, 4.2, -5.6]} scale={[7, 1.4, 0.2]} />
+        {/* Radio mast on the roof. */}
+        <Box m={a.steel} w={0.12} d={0.12} y0={h + 0.4} y1={h + 7} x={5.5} z={3.5} />
+        <Box m={a.steel} w={1.4} d={0.08} y0={h + 5.5} y1={h + 5.6} x={5.5} z={3.5} />
+      </group>
+      {level >= 2 && (
+        <group position={[7.5, 0, 3.5]}>
+          {/* Garage wing for the patrol cars. */}
+          <Box m={a.hospitalFacade} w={6} d={8} y1={3.6} />
+          <Box m={a.policeStripe} w={6.2} d={8.2} y0={3.2} y1={3.6} />
+          <Box m={a.concrete} w={6.4} d={8.4} y0={3.6} y1={4} />
+          <Box m={a.steel} w={4} d={0.15} y0={0.05} y1={2.9} z={-4.05} />
+        </group>
+      )}
+    </group>
+  );
+}
+
+/**
+ * Fire station: garage hall with red roller doors (2 / 3 / 4 by level), hose tower with a
+ * red top, sign over the doors; level 2 adds a second hall behind, level 3 a taller tower.
+ */
+export function FireStation({ level = 1 }: { level?: number }) {
+  const a = useAssets();
+  const doors = Math.min(4, 1 + level);
+  const hallW = 4.5 * doors + 2;
+  const towerH = level >= 3 ? 18 : 13;
+  return (
+    <group>
+      <Box m={a.yard} w={26} d={6} y1={0.06} z={-7} />
+      <group position={[-(28 - hallW) / 2 + 2, 0, -0.5]}>
+        <Box m={a.hospitalFacade} w={hallW} d={13} y1={5.6} />
+        <Box m={a.paintRed} w={hallW + 0.2} d={13.2} y0={5.1} y1={5.6} />
+        <Box m={a.concrete} w={hallW + 0.4} d={13.4} y0={5.6} y1={6} />
+        {Array.from({ length: doors }, (_, i) => (
+          <Box key={i} m={a.rollerDoor} w={3.6} d={0.15} y0={0.05} y1={4.2} x={-hallW / 2 + 1 + 2.25 + i * 4.5} z={-6.55} />
+        ))}
+        <mesh geometry={a.box} material={a.signFire} position={[0, 6.4, -6.5]} scale={[Math.min(hallW - 1, 9), 1.5, 0.3]} />
+      </group>
+      {/* Hose tower at the right with a red cap. */}
+      <group position={[11, 0, 4]}>
+        <Box m={a.hospitalFacade} w={4.2} d={4.2} y1={towerH} />
+        {[0.3, 0.55, 0.8].map((f) => (
+          <Box key={f} m={a.glass} w={0.9} d={0.1} y0={towerH * f} y1={towerH * f + 1.6} z={-2.15} />
+        ))}
+        <Box m={a.paintRed} w={4.6} d={4.6} y0={towerH} y1={towerH + 0.7} />
+        <Box m={a.steel} w={0.1} d={0.1} y0={towerH + 0.7} y1={towerH + 4} />
+      </group>
+      {level >= 2 && (
+        <group position={[-4, 0, 7.5]}>
+          {/* Second hall at the back: workshop and crew quarters. */}
+          <Box m={a.hospitalFacade} w={16} d={5} y1={4.2} />
+          <Box m={a.officeGlass} w={16.1} d={5.1} y0={1.4} y1={2.8} />
+          <Box m={a.paintRed} w={16.2} d={5.2} y0={3.8} y1={4.2} />
+          <Box m={a.concrete} w={16.4} d={5.4} y0={4.2} y1={4.6} />
+        </group>
+      )}
+    </group>
+  );
+}
+
 export function TaxOffice() {
   const a = useAssets();
   const floors = [0, 1, 2, 3];
@@ -3046,7 +3198,7 @@ export function Fair() {
         <mesh position={[0, WHEEL_Y, 0]} rotation={[Math.PI / 2, 0, 0]} material={a.steel}>
           <cylinderGeometry args={[0.5, 0.5, 3.6, 12]} />
         </mesh>
-        <group ref={wheel} position={[0, WHEEL_Y, 0]}>
+        <group ref={wheel} position={[0, WHEEL_Y, 0]} userData={DYNAMIC}>
           {[-0.7, 0.7].map((z) => (
             <mesh key={z} position={[0, 0, z]} material={a.paintWhite} castShadow>
               <torusGeometry args={[WHEEL_R, 0.18, 8, 64]} />
@@ -3080,7 +3232,7 @@ export function Fair() {
         <mesh position={[0, 0.3, 0]} material={a.paintWhite} receiveShadow>
           <cylinderGeometry args={[5.2, 5.4, 0.6, 32]} />
         </mesh>
-        <group ref={carousel}>
+        <group ref={carousel} userData={DYNAMIC}>
           <mesh position={[0, 2.5, 0]} material={a.paintYellow}>
             <cylinderGeometry args={[0.5, 0.5, 4.4, 12]} />
           </mesh>
@@ -3156,6 +3308,7 @@ const SingleBuilding = memo(function SingleBuilding({ b, grid }: { b: Building; 
   if (b.kind === "farm") return <Farm b={b} grid={grid} y={y} />;
   if (b.kind === "sheepfarm") return <SheepFarm b={b} grid={grid} y={y} />;
   if (b.kind === "airport") return <Airport b={b} grid={grid} y={y} />;
+  if (b.kind === "boathouse") return <BoathouseScene b={b} grid={grid} y={y} />;
   // City Pack style: factories, bakery and butcher from the Kenney kits (classic while they load).
   const pack = style === "pack" && !!PACK_SPECS[b.kind];
   const landmark = style === "pack" && (b.kind === "bank" || b.kind === "townhall" || b.kind === "church");
@@ -3190,9 +3343,18 @@ const SingleBuilding = memo(function SingleBuilding({ b, grid }: { b: Building; 
       {b.kind === "foodfactory" && <FoodFactory level={b.level} />}
       {b.kind === "discounter" && <Discounter />}
       {b.kind === "fair" && <Fair />}
+      {b.kind === "casino" && <Casino />}
+      {b.kind === "pizzeria" && <Pizzeria />}
+      {b.kind === "newspaper" && <NewspaperHouse />}
       {b.kind === "townhall" && <TownHall />}
       {b.kind === "taxoffice" && <TaxOffice />}
       {b.kind === "jobcenter" && <JobCentre level={b.level} />}
+      {b.kind === "ruin" && <Ruin />}
+      {b.kind === "prison" && <Prison level={b.level} />}
+      {b.kind === "trainstation" && <TrainStation level={b.level} />}
+      {b.kind === "traindepot" && <TrainDepot level={b.level} />}
+      {b.kind === "police" && <PoliceStation level={b.level} />}
+      {b.kind === "firestation" && <FireStation level={b.level} />}
       {b.kind === "park" && <Park level={b.level} />}
       {b.kind === "recycling" && <RecyclingYard level={b.level} />}
       {b.kind === "goldsmelter" && <GoldSmelter level={b.level} />}
@@ -3207,7 +3369,12 @@ const SingleBuilding = memo(function SingleBuilding({ b, grid }: { b: Building; 
   );
   return (
     <group position={[b.x, y, b.z]} rotation={[0, b.rot, 0]} userData={GROUNDED}>
-      {landmark ? (
+      {b.kind === "villa" ? (
+        // Kenney kit parts: a stone base stands in while they load.
+        <Suspense fallback={<VillaPlaceholder />}>
+          <Villa level={b.level} />
+        </Suspense>
+      ) : landmark ? (
         <Suspense fallback={classic}>{b.kind === "bank" ? <PackBank /> : b.kind === "church" ? <PackChurch /> : <PackTownHall />}</Suspense>
       ) : pack ? (
         <Suspense fallback={classic}>
@@ -3219,6 +3386,11 @@ const SingleBuilding = memo(function SingleBuilding({ b, grid }: { b: Building; 
     </group>
   );
 });
+
+function VillaPlaceholder() {
+  const a = useAssets();
+  return <Box m={a.concrete} w={56} d={48} y0={-14} y1={0.05} />;
+}
 
 function SelectionRing({ b, grid }: { b: Building; grid: DepthGrid }) {
   const a = useAssets();
@@ -3266,6 +3438,8 @@ export function Buildings() {
         ))}
       </group>
       <GroundShadows root={root} version={buildings} />
+      {/* Static parts of all single buildings, merged per material (StaticBatcher.tsx). */}
+      <StaticBatches scene={root} version={buildings} />
       {sel && <SelectionRing b={sel} grid={grid} />}
     </>
   );

@@ -35,6 +35,8 @@ import {
   FurnitureStore,
   Hospital,
   HouseModel,
+  PoliceStation,
+  FireStation,
   Mill,
   Restaurant,
   Sawmill,
@@ -44,6 +46,7 @@ import {
   Waterworks,
 } from "./Buildings";
 import { Airport } from "./Airport";
+import { Prison, TrainDepot, TrainStation } from "./RailwayBuildings";
 import { LayerMeshes } from "./LayerMeshes";
 import { Mine, PowerPlant, Transformer } from "./PowerModels";
 
@@ -67,6 +70,11 @@ export type ThumbKey =
   | "bakery"
   | "waterworks"
   | "hospital"
+  | "police"
+  | "firestation"
+  | "trainstation"
+  | "traindepot"
+  | "prison"
   | "mill"
   | "school"
   | "steelworks"
@@ -227,6 +235,16 @@ function subject(key: ThumbKey): { node: ReactNode; ground: number; tilt: number
       return { node: <Waterworks level={3} />, ground: 60, tilt: 0.55 };
     case "hospital":
       return { node: <Hospital />, ground: 70, tilt: 0.55 };
+    case "police":
+      return { node: <PoliceStation level={2} />, ground: 60, tilt: 0.55 };
+    case "firestation":
+      return { node: <FireStation level={2} />, ground: 65, tilt: 0.55 };
+    case "prison":
+      return { node: <Prison level={2} />, ground: 70, tilt: 0.7 };
+    case "trainstation":
+      return { node: <TrainStation level={2} />, ground: 60, tilt: 0.6 };
+    case "traindepot":
+      return { node: <TrainDepot level={2} />, ground: 50, tilt: 0.6 };
     case "mill":
       return { node: <Mill />, ground: 40, tilt: 0.45 };
     case "school":
@@ -328,6 +346,11 @@ const ORDER: ThumbKey[] = [
   "bakery",
   "waterworks",
   "hospital",
+  "police",
+  "firestation",
+  "trainstation",
+  "traindepot",
+  "prison",
   "mill",
   "school",
   "sawmill",

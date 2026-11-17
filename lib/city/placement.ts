@@ -3,6 +3,7 @@ import { accessRoad, ROADLESS_KINDS, BUILDINGS, sizeOf, insideFootprint, MINES, 
 import { PLANT_WATER_DISTANCE, polylineDistance } from "./power";
 import { sampleDepth, WET_DEPTH, type DepthGrid } from "./terrain";
 import { NAVIGABLE_DEPTH, reachesMarkets } from "./waterways";
+import { RAIL_BUILDINGS, RAIL_SETBACK } from "./railway";
 import { OUTER_HALF_WIDTH, type Cable, type Path, type Road, type Vec2 } from "./types";
 
 /** Buildings that need no road (still dock to one when it is close). */
@@ -15,7 +16,7 @@ const SNAP_ROAD = 70;
 /** Gap between sidewalk edge and building front. */
 const SETBACK = 1.5;
 /** Largest height difference allowed inside a footprint (m); farms tolerate more. */
-const MAX_UNEVEN: Record<BuildingKind, number> = { house: 3, church: 3, farm: 7, mill: 3, bakery: 3, waterworks: 4, hospital: 4, school: 4, steelworks: 6, sawmill: 5, furniture: 5, furniturestore: 3, slaughterhouse: 4, butcher: 3, restaurant: 3, cinema: 3, powerplant: 5, transformer: 3, coalmine: 14, ironmine: 14, uraniummine: 14, bank: 3, townhall: 3, taxoffice: 3, jobcenter: 3, recycling: 4, park: 6, playground: 3, warehouse: 4, harbour: 3, pool: 2, fair: 4, tannery: 4, rubberfactory: 5, shoefactory: 5, shoeshop: 3, sheepfarm: 7, spinning: 4, clothing: 4, fashion: 3, chickenfarm: 5, trader: 4, foodfactory: 4, discounter: 3, goldmine: 14, goldsmelter: 4, jeweller: 3, exchange: 3, airport: Infinity };
+const MAX_UNEVEN: Record<BuildingKind, number> = { house: 3, church: 3, farm: 7, mill: 3, bakery: 3, waterworks: 4, hospital: 4, school: 4, steelworks: 6, sawmill: 5, furniture: 5, furniturestore: 3, slaughterhouse: 4, butcher: 3, restaurant: 3, cinema: 3, powerplant: 5, transformer: 3, coalmine: 14, ironmine: 14, uraniummine: 14, bank: 3, townhall: 3, taxoffice: 3, jobcenter: 3, recycling: 4, park: 6, playground: 3, warehouse: 4, harbour: 3, pool: 2, fair: 4, tannery: 4, rubberfactory: 5, shoefactory: 5, shoeshop: 3, sheepfarm: 7, spinning: 4, clothing: 4, fashion: 3, chickenfarm: 5, trader: 4, foodfactory: 4, discounter: 3, goldmine: 14, goldsmelter: 4, jeweller: 3, exchange: 3, airport: Infinity, police: 3, firestation: 3, ruin: 3, trainstation: 3, traindepot: 4, prison: 5, villa: Infinity, casino: 3, pizzeria: 3, boathouse: 4, newspaper: 4 };
 /** A mine needs terrain at least this high next to it (a mountain to dig into). */
 export const MINE_MIN_HEIGHT = 10;
 
@@ -55,6 +56,10 @@ export function mountainHeight(b: Building, grid: DepthGrid) {
 
 /** Depth of the harbour's quay strip that may stand in the water. */
 const HARBOUR_QUAY = 8;
+/** The boathouse's jetty: the back part of its plot stands out on the water. */
+export const BOAT_JETTY = 14;
+/** How far out from the shore the boathouse looks for water to turn its back to, and to find the shore line. */
+const SHORE_SEARCH = 60;
 
 /**
  * Behind a harbour (local +z, away from the road) there must be water right at the back
@@ -83,6 +88,19 @@ export function quayWater(b: Building, grid: DepthGrid) {
   return n > 0 ? ok / n : 0;
 }
 
+/** Tracks this close to the cursor take a station or signal box. */
+const SNAP_TRACK = 45;
+
+function nearestTrack(cursor: Vec2, paths: Path[]): Path | null {
+  let best: { path: Path; d: number } | null = null;
+  for (const p of paths) {
+    if (p.kind !== "rail" && p.kind !== "rail2") continue;
+    const d = closestOnPath(cursor, p).distance;
+    if (d < SNAP_TRACK && (!best || d < best.d)) best = { path: p, d };
+  }
+  return best?.path ?? null;
+}
+
 /** Canals this close to the cursor take a harbour. */
 const SNAP_CANAL = 45;
 
@@ -108,6 +126,21 @@ export interface PlacementPlan {
 }
 
 /** Points covering a footprint (every ~4 m incl. edges), in world space. */
+/** Samples along the front edge of a plot (local −z, the street side). */
+function frontSamples(b: { x: number; z: number; rot: number; kind: BuildingKind; level?: number }): Vec2[] {
+  const [w, d] = sizeOf(b);
+  const n = Math.max(2, Math.ceil(w / 4));
+  const c = Math.cos(b.rot);
+  const s = Math.sin(b.rot);
+  const lz = -d / 2;
+  const out: Vec2[] = [];
+  for (let i = 0; i <= n; i++) {
+    const lx = -w / 2 + (w * i) / n;
+    out.push({ x: b.x + lx * c + lz * s, z: b.z - lx * s + lz * c });
+  }
+  return out;
+}
+
 export function footprintSamples(b: { x: number; z: number; rot: number; kind: BuildingKind; level?: number }): Vec2[] {
   const [w, d] = sizeOf(b);
   const nx = Math.max(2, Math.ceil(w / 4));
@@ -127,7 +160,10 @@ export function footprintSamples(b: { x: number; z: number; rot: number; kind: B
 
 /** Mean terrain height under a building. */
 export function buildingGround(b: Building, grid: DepthGrid) {
-  const pts = footprintSamples(b);
+  // The villa sits at the height of its front (gate and street side) and is cut into the slope
+  // behind: with the plot's mean it stood metres above the street on a hillside (Nutzer-Bug).
+  // The boathouse likewise stands on the shore at the height of its land side.
+  const pts = b.kind === "villa" || b.kind === "boathouse" ? frontSamples(b) : footprintSamples(b);
   return pts.reduce((sum, p) => sum + Math.max(0, -sampleDepth(grid, p.x, p.z)), 0) / pts.length;
 }
 
@@ -161,7 +197,55 @@ export function planBuilding(
   // A harbour docks with its quay (back) to a canal near the cursor; the street must run
   // along its front (landside).
   const canal = kind === "harbour" ? nearestCanal(cursor, others) : null;
-  if (canal) {
+  // Stations and signal boxes dock with their back (platform) to the nearest track.
+  const track = RAIL_BUILDINGS.includes(kind) ? nearestTrack(cursor, others) : null;
+  if (track) {
+    const a = closestOnPath(cursor, track);
+    let n = { x: -a.direction.z, z: a.direction.x };
+    if ((cursor.x - a.point.x) * n.x + (cursor.z - a.point.z) * n.z < 0) n = { x: -n.x, z: -n.z };
+    const off = OUTER_HALF_WIDTH[track.kind] + RAIL_SETBACK + depth / 2;
+    building = {
+      id,
+      kind,
+      x: a.point.x + n.x * off,
+      z: a.point.z + n.z * off,
+      // Front (local −z) away from the track, back (platform) to it.
+      rot: Math.atan2(-n.x, -n.z),
+      level: 1,
+      variant: 0,
+    };
+  } else if (kind === "boathouse") {
+    // Back (jetty) to the water: the plot is moved along that direction so its land part
+    // ends at the shore line and the jetty reaches out over the water.
+    const rot = backToWater(cursor, grid);
+    if (rot === null) {
+      building = { id, kind, x: cursor.x, z: cursor.z, rot: 0, level: 1, variant: 0 };
+      problem = "Nur am Ufer eines Sees oder Flusses – ans Wasser zeigen";
+    } else {
+      const dx = Math.sin(rot);
+      const dz = Math.cos(rot);
+      const wet = (t: number) => sampleDepth(grid, cursor.x + dx * t, cursor.z + dz * t) > WET_DEPTH;
+      // From the cursor: out to the first water, or (cursor in the water) back to the land.
+      let shore = 0;
+      if (wet(0)) {
+        for (let t = 0; t > -SHORE_SEARCH; t--) {
+          if (!wet(t - 1)) {
+            shore = t - 0.5;
+            break;
+          }
+        }
+      } else {
+        for (let t = 0; t < SHORE_SEARCH; t++) {
+          if (wet(t + 1)) {
+            shore = t + 0.5;
+            break;
+          }
+        }
+      }
+      const back = depth / 2 - BOAT_JETTY;
+      building = { id, kind, x: cursor.x + dx * (shore - back), z: cursor.z + dz * (shore - back), rot, level: 1, variant: 0 };
+    }
+  } else if (canal) {
     const a = closestOnPath(cursor, canal);
     let n = { x: -a.direction.z, z: a.direction.x };
     if ((cursor.x - a.point.x) * n.x + (cursor.z - a.point.z) * n.z < 0) n = { x: -n.x, z: -n.z };
@@ -204,21 +288,32 @@ export function planBuilding(
   const samples = footprintSamples(building);
   // A harbour's quay is built out into the water: its back strip may stand in it.
   const [, depthB] = sizeOf(building);
+  // The boathouse keeps 2 m of its land part free for a slanting shore line.
+  const inWater = kind === "harbour" ? HARBOUR_QUAY : kind === "boathouse" ? BOAT_JETTY + 2 : 0;
   const onLand =
-    kind === "harbour"
-      ? samples.filter((p) => (p.x - building.x) * Math.sin(building.rot) + (p.z - building.z) * Math.cos(building.rot) < depthB / 2 - HARBOUR_QUAY)
+    inWater > 0
+      ? samples.filter((p) => (p.x - building.x) * Math.sin(building.rot) + (p.z - building.z) * Math.cos(building.rot) < depthB / 2 - inWater)
       : samples;
   const heights = onLand.map((p) => -sampleDepth(grid, p.x, p.z));
   const y = heights.reduce((s, h) => s + Math.max(0, h), 0) / heights.length;
   if (!problem && UNIQUE.includes(kind) && buildings.some((o) => o.kind === kind)) problem = `Es gibt schon ein(e) ${BUILDINGS[kind].label} – nur eins pro Stadt`;
+  if (!problem && RAIL_BUILDINGS.includes(kind) && !track) problem = "Nur direkt an einem Gleis – in die Nähe eines Gleises zeigen";
   if (!problem && BUILDINGS[kind].cost > money) problem = `Nicht genug Geld (${BUILDINGS[kind].cost.toLocaleString("de-DE")} € nötig)`;
-  if (!problem && heights.some((h) => h < -0.15)) problem = "Steht im Wasser";
+  // The boathouse's land part may reach down onto the beach (just above the water level).
+  const dry = kind === "boathouse" ? -WET_DEPTH + 0.1 : -0.15;
+  if (!problem && heights.some((h) => h < dry)) problem = "Steht im Wasser";
   if (
     !problem &&
     kind === "trader" &&
     !buildings.some((o) => o.kind === "harbour" && Math.hypot(o.x - building.x, o.z - building.z) <= TRADER_HARBOUR_DISTANCE)
   )
     problem = `Nur in der Nähe eines Binnenhafens (≤ ${TRADER_HARBOUR_DISTANCE} m) – die Ware kommt per Schiff`;
+  if (
+    !problem &&
+    kind === "boathouse" &&
+    sampleDepth(grid, building.x + Math.sin(building.rot) * (depthB / 2 + 3), building.z + Math.cos(building.rot) * (depthB / 2 + 3)) < WET_DEPTH + 0.5
+  )
+    problem = "Zu wenig Wasser am Steg – weiter an offenes Wasser setzen";
   if (!problem && kind === "powerplant" && !nearWater(building, grid))
     problem = "Kraftwerk muss direkt am Wasser liegen (Fluss, See oder Kanal) – es braucht Kühlwasser";
 

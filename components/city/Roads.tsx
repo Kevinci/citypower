@@ -1,7 +1,6 @@
-import { Instance, Instances } from "@react-three/drei";
-import { useEffect, useMemo } from "react";
-import type * as THREE from "three";
-import { occupant } from "@/lib/city/adjacency";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
+import { occupant, pathsNear } from "@/lib/city/adjacency";
 import { buildRoadBarriers } from "@/lib/city/barrier-geometry";
 import { BARRIER_MATERIAL, ROAD_MATERIALS } from "@/lib/city/materials";
 import { distanceToPath, findJunctions, type Junction } from "@/lib/city/network";
@@ -17,6 +16,10 @@ import { NETWORK_OF, OUTER_HALF_WIDTH, type Path, type Road, type RoadKind } fro
 import { heightAtPoint, type Profile } from "@/lib/city/grade";
 import type { DepthGrid } from "@/lib/city/terrain";
 import { LayerMeshes } from "./LayerMeshes";
+import { StaticBatches } from "./StaticBatcher";
+
+/** Marks a finished road as a unit for the StaticBatcher (same flag as building groups). */
+const BATCH_UNIT = { base: true };
 import { crossingCutRadius, useRailRoadCrossings } from "./Rails";
 import { RoadConstruction } from "./RoadConstruction";
 import { Structure } from "./Structure";
@@ -32,30 +35,65 @@ const LAMP_LAYOUT: Record<RoadKind, { spacing: number; offset: number }> = {
   ramp: { spacing: Infinity, offset: 5 },
 };
 
+/** Lamp heads: one shared material so the night can switch the glow on (`setLampGlow` from Sky.tsx). */
+const LAMP_HEAD = new THREE.MeshStandardMaterial({ color: "#fff7e6", emissive: "#ffd48a", emissiveIntensity: 1.6, toneMapped: false });
+export function setLampGlow(intensity: number) {
+  LAMP_HEAD.emissiveIntensity = intensity;
+}
+
+/** Lamp spots of every finished road, reported by the road views (road id → spots). */
+type LampReport = (id: string, spots: LampSpot[]) => void;
+
+const POST_GEOMETRY = new THREE.CylinderGeometry(0.08, 0.11, 6.5, 8);
+const HEAD_GEOMETRY = new THREE.BoxGeometry(0.35, 0.14, 0.7);
+const POST_CLASSIC = new THREE.MeshStandardMaterial({ color: "#c9ced6", roughness: 0.35, metalness: 0.7 });
+// City Pack style: matte light blue-grey posts like the lamps of Kenney's road tiles.
+const POST_PACK = new THREE.MeshStandardMaterial({ color: "#b6bfe5", roughness: 0.7, metalness: 0.1 });
+
+/** Writes static instance matrices once (posts and heads of all lamps). */
+function fillLamps(posts: THREE.InstancedMesh, heads: THREE.InstancedMesh, spots: LampSpot[], postMaterial: THREE.Material) {
+  posts.material = postMaterial;
+  posts.castShadow = true;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const one = new THREE.Vector3(1, 1, 1);
+  const p = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+  spots.forEach((s, i) => {
+    p.set(s.position.x, s.position.y + 3.25, s.position.z);
+    posts.setMatrixAt(i, m.compose(p, q.identity(), one));
+    p.set(s.position.x + s.inward.x * 0.45, s.position.y + 6.45, s.position.z + s.inward.z * 0.45);
+    heads.setMatrixAt(i, m.compose(p, q.setFromAxisAngle(up, Math.atan2(s.inward.x, s.inward.z)), one));
+  });
+  for (const mesh of [posts, heads]) {
+    mesh.count = spots.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+  }
+}
+
+/**
+ * All street lamps of the town in two instanced meshes (posts, heads). Static: matrices are
+ * written when the roads change, never per frame (drei `Instances` per road recomputed
+ * every instance each frame – ~300 meshes and 2 ms per frame in a big town).
+ */
 function StreetLamps({ spots }: { spots: LampSpot[] }) {
-  // City Pack style: matte light blue-grey posts like the lamps of Kenney's road tiles.
   const pack = useCity((st) => st.houseStyle) === "pack";
-  if (spots.length === 0) return null;
+  const capacity = Math.max(64, spots.length);
+  const posts = useMemo(() => new THREE.InstancedMesh(POST_GEOMETRY, POST_CLASSIC, capacity), [capacity]);
+  const heads = useMemo(() => new THREE.InstancedMesh(HEAD_GEOMETRY, LAMP_HEAD, capacity), [capacity]);
+  useEffect(() => fillLamps(posts, heads, spots, pack ? POST_PACK : POST_CLASSIC), [posts, heads, spots, pack]);
+  useEffect(
+    () => () => {
+      posts.dispose();
+      heads.dispose();
+    },
+    [posts, heads],
+  );
   return (
     <>
-      <Instances limit={spots.length} castShadow>
-        <cylinderGeometry args={[0.08, 0.11, 6.5, 8]} />
-        <meshStandardMaterial color={pack ? "#b6bfe5" : "#c9ced6"} roughness={pack ? 0.7 : 0.35} metalness={pack ? 0.1 : 0.7} />
-        {spots.map((s, i) => (
-          <Instance key={i} position={[s.position.x, s.position.y + 3.25, s.position.z]} />
-        ))}
-      </Instances>
-      <Instances limit={spots.length}>
-        <boxGeometry args={[0.35, 0.14, 0.7]} />
-        <meshStandardMaterial color="#fff7e6" emissive="#ffd48a" emissiveIntensity={1.6} toneMapped={false} />
-        {spots.map((s, i) => (
-          <Instance
-            key={i}
-            position={[s.position.x + s.inward.x * 0.45, s.position.y + 6.45, s.position.z + s.inward.z * 0.45]}
-            rotation={[0, Math.atan2(s.inward.x, s.inward.z), 0]}
-          />
-        ))}
-      </Instances>
+      <primitive object={posts} />
+      <primitive object={heads} />
     </>
   );
 }
@@ -67,6 +105,7 @@ function RoadView({
   grid,
   neighbours,
   profile,
+  onLamps,
 }: {
   road: Road;
   junctions: Junction[];
@@ -76,6 +115,7 @@ function RoadView({
   neighbours: Path[];
   /** Height profile: bridges and ramps. */
   profile: Profile;
+  onLamps: LampReport;
 }) {
   const layers = useMemo(() => {
     // A ramp's taper lies on the motorway: leave that part of the ramp out so the motorway
@@ -103,13 +143,20 @@ function RoadView({
     const frames = buildFrames(road.points, road.kind, profile);
     const { spacing, offset } = LAMP_LAYOUT[road.kind];
     const exclude = [road.id];
+    const near = pathsNear(road.points, neighbours, 30);
     return [...lampSpots(frames, offset, spacing), ...lampSpots(frames, -offset, spacing)].filter(
       (s) =>
         junctions.every((j) => Math.hypot(s.position.x - j.x, s.position.z - j.z) > j.radius + 4) &&
         // Never inside a neighbouring road, track or canal.
-        occupant({ x: s.position.x, z: s.position.z }, neighbours, { exclude, margin: 0.5 }) === null,
+        occupant({ x: s.position.x, z: s.position.z }, near, { exclude, margin: 0.5 }) === null,
     );
   }, [road, junctions, neighbours, profile]);
+
+  // Lamps are drawn for all roads at once (StreetLamps in Roads).
+  useEffect(() => {
+    onLamps(road.id, building ? [] : lamps);
+    return () => onLamps(road.id, []);
+  }, [onLamps, road.id, lamps, building]);
 
   // Roads joining this one at a shared point (junctions): its railings open for them.
   const joining = useMemo(
@@ -144,14 +191,14 @@ function RoadView({
   }, [layers]);
 
   // While under construction the site animation renders the road and reveals it bit by bit.
+  // Finished roads are static: their layers, barriers and structures are drawn in batches.
   return (
-    <group>
+    <group userData={building ? undefined : BATCH_UNIT}>
       {building ? (
         <RoadConstruction road={road} layers={layers} profile={profile} />
       ) : (
         <>
           <LayerMeshes layers={layers} materials={ROAD_MATERIALS} />
-          <StreetLamps spots={lamps} />
           {barriers && <mesh geometry={barriers} material={BARRIER_MATERIAL} castShadow receiveShadow />}
         </>
       )}
@@ -207,11 +254,32 @@ export function Roads() {
     return () => junctionGeometry?.dispose();
   }, [junctionGeometry]);
 
+  // Street lamps of all roads, collected from the road views (batched: microtask after the reports).
+  const lampMap = useRef(new Map<string, LampSpot[]>());
+  const [lampSpotsAll, setLampSpotsAll] = useState<LampSpot[]>([]);
+  const pending = useRef(false);
+  const onLamps = useCallback<LampReport>((id, spots) => {
+    if (spots.length === 0) lampMap.current.delete(id);
+    else lampMap.current.set(id, spots);
+    if (pending.current) return;
+    pending.current = true;
+    queueMicrotask(() => {
+      pending.current = false;
+      setLampSpotsAll([...lampMap.current.values()].flat());
+    });
+  }, []);
+
+  const root = useRef<THREE.Group>(null);
   return (
     <group>
-      {roads.map((road) => (
-        <RoadView key={road.id} road={road} junctions={cuts} building={jobs.includes(road.id)} grid={grid} neighbours={neighbours} profile={profileOf(profiles, road.id)} />
-      ))}
+      <group ref={root}>
+        {roads.map((road) => (
+          <RoadView key={road.id} road={road} junctions={cuts} building={jobs.includes(road.id)} grid={grid} neighbours={neighbours} profile={profileOf(profiles, road.id)} onLamps={onLamps} />
+        ))}
+      </group>
+      {/* All finished roads per material in one batch (StaticBatcher.tsx). */}
+      <StaticBatches scene={root} version={roads} name="__roadBatcher" />
+      <StreetLamps spots={lampSpotsAll} />
       {junctionGeometry && <mesh geometry={junctionGeometry} material={ROAD_MATERIALS.asphalt} receiveShadow />}
     </group>
   );

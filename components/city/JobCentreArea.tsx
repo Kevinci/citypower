@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import * as THREE from "three";
-import { JOBCENTRE_RADIUS, RECREATION_RADIUS, type BuildingKind } from "@/lib/city/economy";
+import { JOBCENTRE_RADIUS, RECREATION_RADIUS, SERVICE_RADIUS, type BuildingKind } from "@/lib/city/economy";
 import { buildingGround } from "@/lib/city/placement";
 import { useCity } from "@/lib/city/store";
 import { useShapedGrid } from "./useProfiles";
@@ -14,6 +14,8 @@ const AREAS: Partial<Record<BuildingKind, { radius: number[]; fill: THREE.Materi
   jobcenter: { radius: JOBCENTRE_RADIUS, ...materials("#f39c12", "#e67e22") },
   park: { radius: RECREATION_RADIUS.park!, ...materials("#5fbf4a", "#2e8b3a") },
   playground: { radius: RECREATION_RADIUS.playground!, ...materials("#f4d03f", "#d4ac0d") },
+  police: { radius: SERVICE_RADIUS.police!, ...materials("#3d8fd6", "#1f4e8c") },
+  firestation: { radius: SERVICE_RADIUS.firestation!, ...materials("#e8604f", "#b4221c") },
 };
 
 function materials(fill: string, rim: string) {

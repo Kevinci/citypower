@@ -22,6 +22,12 @@ export const SERVICE_LABEL: Partial<Record<BuildingKind, string>> = {
   exchange: "Börse",
   warehouse: "Lagerhallen",
   harbour: "Häfen inkl. Schiffe",
+  prison: "Gefängnisse",
+  villa: "Bürgermeistervilla (Pflege)",
+  trainstation: "Bahnhöfe",
+  traindepot: "Stellwerke inkl. Züge",
+  police: "Polizei",
+  firestation: "Feuerwehr",
 };
 
 export interface MoneyLine {
@@ -92,6 +98,12 @@ export function treasuryReport(e: EconomyStats, buildings: Building[], loans: Lo
   ];
   if ((b.airport ?? 0) > 0 || buildings.some((x) => x.kind === "airport"))
     income.push({ id: "airport", label: "Flughafen", value: b.airport ?? 0, sub: "Gebühren und Luftfracht" });
+  if ((b.emergency ?? 0) > 0 || buildings.some((x) => x.kind === "police" || x.kind === "firestation"))
+    income.push({ id: "emergency", label: "Bußgelder & Feuerschutzabgabe", value: b.emergency ?? 0, sub: "Einwohner im Umkreis von Polizei/Feuerwehr" });
+  if ((b.justice ?? 0) > 0 || buildings.some((x) => x.kind === "prison"))
+    income.push({ id: "justice", label: "Haftkostenerstattung", value: b.justice ?? 0, sub: "vom Land je Häftling" });
+  if ((b.rail ?? 0) > 0 || buildings.some((x) => x.kind === "trainstation"))
+    income.push({ id: "rail", label: "Bahn", value: b.rail ?? 0, sub: "Fahrgeld und Fracht" });
   if (shipIncome > 0 || buildings.some((x) => x.kind === "harbour"))
     income.push({ id: "ships", label: "Schiffsexporte", value: shipIncome, sub: "Ø letzter Spieltag" });
   const payments = loanPayments(loans);
@@ -101,6 +113,7 @@ export function treasuryReport(e: EconomyStats, buildings: Building[], loans: Lo
     .sort((x, y) => y.value - x.value);
   if (b.storage > 0) spending.push({ id: "storage", label: "Lagerankauf", value: b.storage, sub: "Überschuss der Fabriken" });
   if ((b.gold ?? 0) > 0) spending.push({ id: "gold", label: "Goldankauf", value: b.gold!, sub: "Barren der Goldschmelzen in den Tresor" });
+  if ((b.mayor ?? 0) > 0) spending.push({ id: "mayor", label: "Bürgermeistergehalt", value: b.mayor!, sub: "aufs Privatkonto" });
   if (payments > 0) spending.push({ id: "loans", label: "Kreditraten", value: payments });
   const totalIncome = income.reduce((s, l) => s + l.value, 0);
   const totalSpending = spending.reduce((s, l) => s + l.value, 0);

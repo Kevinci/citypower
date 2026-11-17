@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { useCity } from "@/lib/city/store";
 import { useKitParts } from "./HousePack";
 import { KitModel } from "./PackBuildings";
+import { signGlow } from "./nightGlow";
 
 /**
  * Bank and town hall in the City Pack style: grand Kenney-look landmarks that keep their
@@ -169,6 +170,8 @@ function banknoteMaterial() {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   noteMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.7, side: THREE.DoubleSide });
+  // Floodlit at night.
+  signGlow(noteMat, 1.2);
   return noteMat;
 }
 
@@ -222,6 +225,7 @@ function bankSignMaterial() {
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   signMat = new THREE.MeshStandardMaterial({ map: t, roughness: 0.5 });
+  signGlow(signMat, 1.6);
   return signMat;
 }
 

@@ -65,7 +65,6 @@ function useHotkeys() {
   }, []);
 }
 
-/** One second of economy per real second; a fresh random world on first load. */
 /** Autosave interval in real seconds. */
 const AUTOSAVE_SECONDS = 60;
 
@@ -78,12 +77,25 @@ function useSimulation() {
     const saved = readAutosave();
     if (saved) useCity.getState().loadGame(saved);
     else useCity.getState().newWorld(Math.floor(Math.random() * 1e9));
-    const tick = window.setInterval(() => useCity.getState().tick(), 1000);
+    // Game clock: one tick per real second, scheduled against the real time (no drift when a
+    // tick or a frame takes long).
+    let next = performance.now() + 1000;
+    let timer = 0;
+    const run = () => {
+      // Economy and growth run in the simulation worker (store: tickAsync).
+      void useCity.getState().tickAsync();
+      // Behind by more than a tick (tab in the background, long stall): skip, never catch up in a burst.
+      const now = performance.now();
+      next = Math.max(next + 1000, now + 250);
+      timer = window.setTimeout(run, next - now);
+    };
+    timer = window.setTimeout(run, 1000);
+    const tick = { clear: () => window.clearTimeout(timer) };
     const save = () => writeAutosave(useCity.getState().toSave());
     const auto = window.setInterval(save, AUTOSAVE_SECONDS * 1000);
     window.addEventListener("pagehide", save);
     return () => {
-      window.clearInterval(tick);
+      tick.clear();
       window.clearInterval(auto);
       window.removeEventListener("pagehide", save);
     };

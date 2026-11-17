@@ -149,10 +149,14 @@ const KENNEY_ROAD: Record<RoadMaterialKey, string> = {
   median: "#33956e",
   bikeway: "#b0584a",
 };
-function kenneyable(material: THREE.MeshStandardMaterial, key: RoadMaterialKey) {
+/**
+ * Pack style for a photo-textured material: flat Kenney colour `hex` instead of the photo and
+ * no normal-map relief, switched by the shared `uRoadPack` uniform (`setRoadPack`).
+ */
+function kenneyable<T extends THREE.MeshStandardMaterial>(material: T, key: string, hex: string = KENNEY_ROAD[key as RoadMaterialKey]): T {
   const previous = material.onBeforeCompile;
   const baseKey = material.customProgramCacheKey();
-  const c = new THREE.Color(KENNEY_ROAD[key]);
+  const c = new THREE.Color(hex);
   const flat = `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`;
   material.onBeforeCompile = (shader, renderer) => {
     previous.call(material, shader, renderer);
@@ -324,16 +328,20 @@ export const STEEL_MATERIALS = {
   rail: new THREE.MeshStandardMaterial({ color: "#8a2e24", roughness: 0.5, metalness: 0.45, side: THREE.DoubleSide }),
 };
 
-/** Grass on embankment slopes; same photo as the meadow, a bit lusher. */
-export const EMBANKMENT_MATERIAL = new THREE.MeshStandardMaterial({
-  ...pbr("aerial_grass_rock", 6),
-  color: "#93c063",
-  roughness: 1,
-  side: THREE.DoubleSide,
-});
+/** Grass on embankment slopes; same photo as the meadow, a bit lusher (pack style: the Kenney lawn of the ground). */
+export const EMBANKMENT_MATERIAL = kenneyable(
+  new THREE.MeshStandardMaterial({
+    ...pbr("aerial_grass_rock", 6),
+    color: "#93c063",
+    roughness: 1,
+    side: THREE.DoubleSide,
+  }),
+  "embankment",
+  "#33956e",
+);
 
-/** Bridge concrete with the paver texture at a large scale as subtle formwork pattern. */
-export const STRUCTURE_CONCRETE = desaturate(
+/** Bridge concrete with the paver texture at a large scale as subtle formwork pattern (pack style: flat light grey). */
+export const STRUCTURE_CONCRETE = kenneyable(desaturate(
   new THREE.MeshStandardMaterial({
     ...pbr("concrete_pavers_02", 8),
     // Above 1 on purpose: the paver photo is dark, bridge concrete is light.
@@ -344,4 +352,4 @@ export const STRUCTURE_CONCRETE = desaturate(
   }),
   1,
   "#dedbd5",
-);
+), "structure", "#c9ccd8");

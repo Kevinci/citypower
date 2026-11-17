@@ -266,6 +266,35 @@ export interface Car {
   /** Rendered pose, eased towards the lane position for smooth turns and lane changes. */
   pos: THREE.Vector3;
   yaw: number;
+  /** Seconds left of pulling over for an emergency vehicle behind (0 = driving normally). */
+  yieldT: number;
+  /** Emergency vehicle on a mission: follows `route` instead of choosing at random. */
+  role?: "police" | "fire" | "ambulance";
+  /** Edge indices to drive, and the index of the current one in it. */
+  route?: number[];
+  routeAt?: number;
+  /** Progress on the last route edge where the vehicle stops (and parks). */
+  stopAt?: number;
+  /** Standing still at its destination (or a wreck): blocks the lane behind it. */
+  parked?: boolean;
+  /** Extra yaw for a wreck lying askew. */
+  skew?: number;
+}
+
+/** Speed factor of emergency vehicles over the road's cruising speed. */
+const EMERGENCY_SPEED = 1.8;
+
+/** How far cars pull over to the right for an emergency vehicle (m), and how far it looks ahead. */
+export const YIELD_SHIFT = 1.4;
+const YIELD_RANGE = 60;
+/** Emergency vehicles pass on the left of pulled-over cars, and further out round parked ones. */
+const PASS_SHIFT = -1.0;
+const PASS_PARKED_SHIFT = -2.3;
+
+/** Lane offset to draw a car at: pulled over, or passing on the left (emergency, see `passingTraffic`). */
+export function laneShift(car: Car, passing: 0 | 1 | 2) {
+  if (car.yieldT > 0) return YIELD_SHIFT;
+  return passing === 2 ? PASS_PARKED_SHIFT : passing === 1 ? PASS_SHIFT : 0;
 }
 
 function startDir(edge: Edge, v: THREE.Vector3) {
@@ -280,15 +309,24 @@ function endDir(edge: Edge, v: THREE.Vector3) {
   return v;
 }
 
-/** Picks the edge a car takes after `edge`, or null if there is none. */
-export function chooseNext(graph: LaneGraph, edge: Edge, rnd: () => number): number | null {
+/**
+ * Picks the edge a car takes after `edge`, or null if there is none. Closed edges (a street
+ * cordoned off at an incident) are never taken: traffic turns off elsewhere, turns round on a
+ * street, and waits at the node on a motorway (no turning there).
+ */
+export function chooseNext(graph: LaneGraph, edge: Edge, rnd: () => number, closed?: Set<number>): number | null {
   const out = graph.outgoing.get(edge.to) ?? [];
   const inDir = endDir(edge, new THREE.Vector3());
   const options: { e: number; w: number }[] = [];
   let uTurn: number | null = null;
+  let blocked = false;
   const d = new THREE.Vector3();
   for (const e of out) {
     const cand = graph.edges[e];
+    if (closed?.has(e)) {
+      blocked = true;
+      continue;
+    }
     if (cand.road.id === edge.road.id && cand.dir !== edge.dir && Math.abs(cand.s0 - (edge.s0 + edge.dir * edge.length)) < 1) {
       uTurn = e;
       continue;
@@ -300,7 +338,7 @@ export function chooseNext(graph: LaneGraph, edge: Edge, rnd: () => number): num
     if (edge.road.kind === "highway" && cand.road.kind === "ramp") w *= 0.35;
     options.push({ e, w });
   }
-  if (options.length === 0) return uTurn;
+  if (options.length === 0) return blocked && edge.road.kind !== "street" ? null : uTurn;
   const total = options.reduce((s, o) => s + o.w, 0);
   let r = rnd() * total;
   for (const o of options) {
@@ -333,16 +371,25 @@ export function spawnCars(graph: LaneGraph, count: number, types: number[], seed
       next: null,
       pos,
       yaw: Math.atan2(heading.x, heading.z),
+      yieldT: 0,
     });
   }
   return cars;
+}
+
+/** A car placed on an edge (emergency vehicle at its station, wreck at an accident). */
+export function placeCar(graph: LaneGraph, edge: number, x: number, lane: number, type: number, extra: Partial<Car> = {}): Car {
+  const pos = new THREE.Vector3();
+  const heading = new THREE.Vector3();
+  edgePose(graph.edges[edge], x, lane, pos, heading);
+  return { edge, x, lane, speed: 0, type, next: null, pos, yaw: Math.atan2(heading.x, heading.z), yieldT: 0, ...extra };
 }
 
 /**
  * Advances all cars by dt seconds: car following on the same edge and onto the next one,
  * edge changes at nodes, and eased lane offsets.
  */
-export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => number, time: number) {
+export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => number, time: number, closed?: Set<number>) {
   // Cars per edge, sorted by progress, for the car-following check.
   const byEdge = new Map<number, Car[]>();
   for (const c of cars) {
@@ -352,16 +399,39 @@ export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => n
   }
   for (const list of byEdge.values()) list.sort((a, b) => a.x - b.x);
 
+  // Emergency vehicles on the move: everything ahead of them pulls over to the right.
+  for (const car of cars) {
+    if (!car.role || car.parked) continue;
+    const edge = graph.edges[car.edge];
+    if (!edge) continue;
+    for (const o of byEdge.get(car.edge) ?? []) if (!o.role && !o.parked && o.x > car.x && o.x - car.x < YIELD_RANGE) o.yieldT = 2.5;
+    const left = YIELD_RANGE - (edge.length - car.x);
+    if (left > 0 && car.next !== null) for (const o of byEdge.get(car.next) ?? []) if (!o.role && !o.parked && o.x < left) o.yieldT = 2.5;
+  }
+
+  // Effective lane: pulled-over cars have left the lane.
+  const laneOf = (c: Car) => c.lane + (c.yieldT > 0 ? YIELD_SHIFT : 0);
+
   for (const car of cars) {
     const edge = graph.edges[car.edge];
     if (!edge) continue;
-    if (car.next === null) car.next = chooseNext(graph, edge, rnd);
+    if (car.yieldT > 0) car.yieldT -= dt;
+    if (car.parked) {
+      car.speed = 0;
+      continue;
+    }
+    // A street closed meanwhile: choose again (emergency vehicles drive in anyway).
+    if (!car.route && car.next !== null && closed?.has(car.next)) car.next = null;
+    if (car.next === null) car.next = car.route ? (car.route[(car.routeAt ?? 0) + 1] ?? null) : chooseNext(graph, edge, rnd, closed);
 
     // Distance to the car ahead in the same lane (this edge, then the next one).
     let gap = Infinity;
     const same = byEdge.get(car.edge) ?? [];
+    const myLane = laneOf(car);
     for (const o of same) {
-      if (o !== car && o.x > car.x && Math.abs(o.lane - car.lane) < 1) {
+      // Emergency vehicles drive round parked vehicles (another unit at a scene, a wreck they are not heading for).
+      if (car.role && o.parked) continue;
+      if (o !== car && o.x > car.x && Math.abs(laneOf(o) - myLane) < 1) {
         gap = Math.min(gap, o.x - car.x);
       }
     }
@@ -371,11 +441,22 @@ export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => n
     if (gap === Infinity && next && !uTurn) {
       const nextLane = next.lanes.includes(car.lane) ? car.lane : null;
       for (const o of byEdge.get(next.index) ?? []) {
-        if (nextLane === null || Math.abs(o.lane - nextLane) < 1) gap = Math.min(gap, edge.length - car.x + o.x);
+        if (car.role && o.parked) continue;
+        if (nextLane === null || Math.abs(laneOf(o) - nextLane) < 1) gap = Math.min(gap, edge.length - car.x + o.x);
+      }
+    }
+    // Destination on the last route edge: stop there (or just behind the queue in front of it).
+    if (car.route && car.stopAt !== undefined && car.next === null) {
+      const blocked = gap < SAFE_GAP + 0.5 && car.x >= car.stopAt - 30;
+      gap = Math.min(gap, car.stopAt - car.x + SAFE_GAP);
+      if ((car.x >= car.stopAt - 0.3 || blocked) && car.speed < 0.3) {
+        car.parked = true;
+        car.speed = 0;
+        continue;
       }
     }
     // Traffic light ahead: red (and yellow if there is still room to stop) is a wall at the stop line.
-    if (edge.signal) {
+    if (edge.signal && !car.role) {
       const signal = graph.signals[edge.signal.id];
       const state = signal ? lightState(signal, edge.signal.group, time) : "green";
       const toStop = edge.length - edge.signal.stop - car.x;
@@ -384,9 +465,13 @@ export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => n
         gap = Math.min(gap, Math.max(0, toStop) + SAFE_GAP - 1.5);
       }
     }
-    const want = gap === Infinity ? edge.speed : Math.max(0, Math.min(edge.speed, (gap - SAFE_GAP) * 1.2));
+    // Emergency vehicles with blue lights drive well above the limit (in town ~78 km/h instead of 43).
+    const top = car.role ? edge.speed * EMERGENCY_SPEED : edge.speed;
+    let want = gap === Infinity ? top : Math.max(0, Math.min(top, (gap - SAFE_GAP) * 1.2));
+    // Pulled over: crawl until the emergency vehicle has passed.
+    if (car.yieldT > 0) want = Math.min(want, 1.5);
     // Smooth acceleration / braking.
-    car.speed += THREE.MathUtils.clamp(want - car.speed, -8 * dt, 3 * dt);
+    car.speed += THREE.MathUtils.clamp(want - car.speed, -8 * dt, (car.role ? 5.5 : 3) * dt);
     car.x += car.speed * dt;
 
     // Edge change.
@@ -402,7 +487,136 @@ export function stepCars(graph: LaneGraph, cars: Car[], dt: number, rnd: () => n
       car.edge = car.next;
       const nextEdge = graph.edges[car.edge];
       if (!nextEdge.lanes.includes(car.lane)) car.lane = nextEdge.lanes[Math.floor(rnd() * nextEdge.lanes.length)];
-      car.next = chooseNext(graph, nextEdge, rnd);
+      if (car.route) {
+        car.routeAt = (car.routeAt ?? 0) + 1;
+        car.next = car.route[car.routeAt + 1] ?? null;
+      } else car.next = chooseNext(graph, nextEdge, rnd, closed);
     }
   }
+}
+
+/** The edge in the opposite travel direction between the same two nodes, or null (one-way). */
+export function reverseEdge(graph: LaneGraph, edge: Edge): Edge | null {
+  const end = edge.s0 + edge.dir * edge.length;
+  for (const e of graph.outgoing.get(edge.to) ?? []) {
+    const o = graph.edges[e];
+    if (o.road.id === edge.road.id && o.dir !== edge.dir && Math.abs(o.s0 - end) < 1) return o;
+  }
+  return null;
+}
+
+/**
+ * The police closes a street at an incident (`sites` = the scene on each travel direction):
+ * cars already on it in front of the scene turn round and drive back out; cars heading for it
+ * choose again (see `stepCars`). Motorway traffic cannot turn and queues instead.
+ */
+export function closeStreet(graph: LaneGraph, cars: Car[], sites: { edge: number; x: number }[]) {
+  for (const site of sites) {
+    const edge = graph.edges[site.edge];
+    if (!edge || edge.road.kind !== "street") continue;
+    const back = reverseEdge(graph, edge);
+    if (!back) continue;
+    for (const car of cars) {
+      if (car.role || car.parked || car.edge !== site.edge || car.x >= site.x - 4) continue;
+      car.edge = back.index;
+      car.x = Math.max(0, edge.length - car.x);
+      if (!back.lanes.includes(car.lane)) car.lane = back.lanes[0];
+      car.speed = Math.min(car.speed, 3);
+      car.next = null;
+    }
+  }
+}
+
+/** What an emergency vehicle has to pass within `range` ahead: 0 nothing, 1 pulled-over cars, 2 a parked vehicle. */
+export function passingTraffic(graph: LaneGraph, cars: Car[], car: Car, range = 25): 0 | 1 | 2 {
+  const edge = graph.edges[car.edge];
+  if (!edge || car.parked) return 0;
+  let level: 0 | 1 | 2 = 0;
+  for (const o of cars) {
+    if (o === car || (o.yieldT <= 0 && !o.parked)) continue;
+    const near =
+      (o.edge === car.edge && o.x > car.x - 6 && o.x - car.x < range) ||
+      (car.next !== null && o.edge === car.next && o.x < range - (edge.length - car.x));
+    if (!near) continue;
+    if (o.parked) return 2;
+    level = 1;
+  }
+  return level;
+}
+
+/** Every edge passing within 0.5 m of the closest one to a point (both travel directions of a road). */
+export function nearestEdges(graph: LaneGraph, x: number, z: number, kinds?: RoadKind[]): { edge: number; x: number; d: number }[] {
+  const best = nearestEdge(graph, x, z, kinds);
+  if (!best) return [];
+  const out: { edge: number; x: number; d: number }[] = [];
+  for (const e of graph.edges) {
+    if (kinds && !kinds.includes(e.road.kind)) continue;
+    if (e.road.id !== graph.edges[best.edge].road.id) continue;
+    const one = nearestEdge({ ...graph, edges: [e] }, x, z);
+    if (one && one.d <= best.d + 0.5) out.push({ edge: e.index, x: one.x, d: one.d });
+  }
+  return out;
+}
+
+/* ---------- routing for emergency vehicles ---------- */
+
+/** Edge and progress on it closest to a point (streets, motorways and ramps). */
+export function nearestEdge(graph: LaneGraph, x: number, z: number, kinds?: RoadKind[]): { edge: number; x: number; d: number } | null {
+  let best: { edge: number; x: number; d: number } | null = null;
+  for (const e of graph.edges) {
+    if (kinds && !kinds.includes(e.road.kind)) continue;
+    // Frames of the road between the edge's stations.
+    const sA = e.dir === 1 ? e.s0 : e.s0 - e.length;
+    const sB = sA + e.length;
+    const i0 = frameIndex(e.dist, sA);
+    const i1 = Math.min(e.frames.length - 1, frameIndex(e.dist, sB) + 1);
+    for (let i = i0; i <= i1; i++) {
+      const f = e.frames[i];
+      const d = Math.hypot(f.p.x - x, f.p.z - z);
+      if (!best || d < best.d) {
+        const s = Math.min(sB, Math.max(sA, e.dist[i]));
+        best = { edge: e.index, x: e.dir === 1 ? s - e.s0 : e.s0 - s, d };
+      }
+    }
+  }
+  return best;
+}
+
+/** Shortest chain of edges from one edge to another (both included), or null. */
+export function routeEdges(graph: LaneGraph, from: number, to: number): number[] | null {
+  if (from === to) return [from];
+  const dist = new Map<number, number>([[from, 0]]);
+  const prev = new Map<number, number>();
+  const open: number[] = [from];
+  const done = new Set<number>();
+  while (open.length > 0) {
+    // Smallest tentative distance (graphs are small enough for a linear scan).
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (dist.get(open[i])! < dist.get(open[bi])!) bi = i;
+    const cur = open.splice(bi, 1)[0];
+    if (cur === to) break;
+    if (done.has(cur)) continue;
+    done.add(cur);
+    const e = graph.edges[cur];
+    const base = dist.get(cur)! + e.length;
+    for (const n of graph.outgoing.get(e.to) ?? []) {
+      const ne = graph.edges[n];
+      // Turning round on the spot is a last resort.
+      const uTurn = ne.road.id === e.road.id && ne.dir !== e.dir;
+      const d = base + (uTurn ? 80 : 0);
+      if (d < (dist.get(n) ?? Infinity)) {
+        dist.set(n, d);
+        prev.set(n, cur);
+        open.push(n);
+      }
+    }
+  }
+  if (!dist.has(to)) return null;
+  const route = [to];
+  let cur = to;
+  while (cur !== from) {
+    cur = prev.get(cur)!;
+    route.push(cur);
+  }
+  return route.reverse();
 }

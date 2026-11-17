@@ -13,6 +13,7 @@ import { planCloverleaf, planCloverleafPrefab } from "@/lib/city/cloverleaf";
 import { planTrumpet } from "@/lib/city/trumpet";
 import { planInterchange } from "@/lib/city/interchange";
 import { bulldozeTarget } from "@/lib/city/bulldoze";
+import { insideFootprint, sizeOf } from "@/lib/city/economy";
 import { useProfiles } from "./useProfiles";
 import { useDepthGrid } from "./useWater";
 import { LayerMeshes } from "./LayerMeshes";
@@ -186,14 +187,20 @@ export function RoadBuilder() {
   const rails = useCity((s) => s.rails);
   const canals = useCity((s) => s.canals);
   const cables = useCity((s) => s.cables);
+  const buildings = useCity((s) => s.buildings);
+  // A fire ruin under the cursor wins (same order as the store's bulldoze).
+  const ruin = useMemo(
+    () => (tool === "bulldoze" && cursor ? buildings.find((b) => b.kind === "ruin" && insideFootprint(b, cursor.x, cursor.z, 1)) : undefined),
+    [tool, cursor, buildings],
+  );
   const bulldoze = useMemo(() => {
-    if (tool !== "bulldoze" || !cursor) return null;
+    if (tool !== "bulldoze" || !cursor || ruin) return null;
     const target = bulldozeTarget(cursor, { roads, rails, canals, cables });
     if (!target) return null;
     const mb = new MeshBuilder();
     strip(mb, buildFrames([target.a, target.b], "street"), -target.half - 0.5, target.half + 0.5, 0);
     return { geometry: mb.geometry(), y: Math.max(groundAt(target.a), groundAt(target.b)) + 0.4 };
-  }, [tool, cursor, roads, rails, canals, cables]);
+  }, [tool, cursor, roads, rails, canals, cables, ruin]);
   useEffect(() => () => bulldoze?.geometry?.dispose(), [bulldoze]);
 
   const ghostMaterials = useMemo(
@@ -233,6 +240,11 @@ export function RoadBuilder() {
         </mesh>
       ))}
 
+      {ruin && (
+        <mesh position={[ruin.x, groundAt(ruin) + 3, ruin.z]} rotation={[0, ruin.rot, 0]} material={GHOST_MATERIALS.invalid} renderOrder={7}>
+          <boxGeometry args={[sizeOf(ruin)[0] + 1, 6, sizeOf(ruin)[1] + 1]} />
+        </mesh>
+      )}
       {bulldoze?.geometry && <mesh geometry={bulldoze.geometry} material={GHOST_MATERIALS.invalid} position={[0, bulldoze.y, 0]} renderOrder={7} />}
       {cursor && !PLACEMENT_TOOLS.includes(tool) && tool !== "bulldoze" && (
         // Green = attaches cleanly to an existing path, red = not possible here, yellow = free point.
